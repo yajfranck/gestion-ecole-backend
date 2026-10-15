@@ -1,0 +1,3995 @@
+openapi: 3.1.0
+info:
+  title: Gestion Ecole API
+  version: 1.0.0
+  description: |
+    Contrat HTTP de l'application Gestion Ecole.
+    Les endpoints Employee sont filtrés selon l'établissement du responsable.
+    Les endpoints de consultation des comptes, rôles et permissions exigent
+    ADMIN_ACCESS. La gestion des élèves exige can_student_*; les inscriptions exigent
+    can_enrollment_read ou can_enrollment_create; les employés et les
+    postes utilisent leurs permissions dédiées. Les endpoints de gestion générale
+    exigent ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT; les postes ont aussi
+    des permissions dédiées
+    can_position_read, can_position_create, can_position_update,
+    can_position_assign_roles et can_position_delete. La fiche personnelle
+    exige STAFF_ACCESS. Les tuteurs consultent uniquement les enfants liés à
+    leur compte via can_guardian_read_children.
+    La console H2 est une interface locale, pas une opération REST.
+servers:
+  - url: http://localhost:8080
+    description: Serveur local
+tags:
+  - name: Authentification
+  - name: Administration de la sécurité
+  - name: Établissements
+  - name: Catalogue scolaire
+  - name: Calendrier scolaire
+  - name: Élèves
+  - name: Parents et tuteurs
+  - name: Frais et paiements
+  - name: Inscriptions
+  - name: Postes
+  - name: Personnel
+  - name: Santé
+paths:
+  /api/v1/login:
+    post:
+      tags:
+        - Authentification
+      summary: Authentifier un compte
+      description: Retourne un JWT d'accès signé en HS256 et un refresh token opaque. Le JWT expire après 15 minutes et le refresh token après 30 jours par défaut.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              login: admin-tech
+              password: <mot-de-passe>
+      responses:
+        '200':
+          description: Authentification réussie.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              example:
+                accessToken: <jwt>
+                tokenType: Bearer
+                expiresIn: 900
+                refreshToken: <refresh-token>
+                refreshExpiresIn: 2592000
+        '400':
+          description: Corps absent, JSON invalide ou données ne respectant pas les contraintes de validation.
+        '401':
+          description: Identifiants invalides. La réponse ne contient pas de corps.
+
+  /api/v1/refresh:
+    post:
+      tags:
+        - Authentification
+      summary: Renouveler les jetons
+      description: |
+        Renouvelle le JWT d'accès sans exiger celui-ci dans la requête.
+        Le refresh token est à usage unique et est remplacé à chaque succès.
+        Le rejeu d'un ancien refresh token révoque les tokens actifs de sa famille.
+      operationId: refreshTokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Jeton d'accès et refresh token renouvelés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Corps absent, JSON invalide ou refresh token blanc.
+        '401':
+          description: Refresh token inconnu, expiré, révoqué ou associé à un compte inactif.
+
+  /api/v1/user:
+    get:
+      tags:
+        - Administration de la sécurité
+      summary: Lister les comptes utilisateur
+      description: Retourne les comptes triés par nom d'utilisateur et leurs codes de rôles. Les hashes de mot de passe ne sont jamais exposés.
+      operationId: getUsers
+      responses:
+        '200':
+          description: Liste des comptes, éventuellement vide.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserAccountResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas la permission ADMIN_ACCESS.
+
+  /api/v1/user/me/password:
+    put:
+      tags:
+        - Authentification
+      summary: Modifier son mot de passe
+      description: Requiert un compte authentifié. Vérifie le mot de passe actuel, enregistre le nouveau avec BCrypt et révoque les refresh tokens actifs.
+      operationId: changeOwnPassword
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Mot de passe modifié; les refresh tokens actifs ont été révoqués.
+        '400':
+          description: Nouveau mot de passe invalide, trop court, trop long ou identique à l'actuel.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Mot de passe actuel incorrect.
+
+  /api/v1/role:
+    get:
+      tags:
+        - Administration de la sécurité
+      summary: Lister les rôles
+      description: Retourne les rôles et leurs permissions, triés par code.
+      operationId: getRoles
+      responses:
+        '200':
+          description: Liste des rôles, éventuellement vide.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RoleResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas la permission ADMIN_ACCESS.
+    post:
+      tags:
+        - Administration de la sécurité
+      summary: Créer un rôle
+      description: Requiert ADMIN_ACCESS. Toutes les permissions doivent déjà exister dans le catalogue.
+      operationId: createRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        '201':
+          description: Rôle créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        '400':
+          description: Code, nom ou permissions invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission ADMIN_ACCESS absente.
+        '409':
+          description: Code de rôle déjà utilisé.
+
+  /api/v1/role/{code}:
+    put:
+      tags:
+        - Administration de la sécurité
+      summary: Modifier le nom, la description et les permissions d'un rôle
+      description: Requiert ADMIN_ACCESS. Le code est immuable et ADMIN doit conserver ADMIN_ACCESS.
+      operationId: updateRole
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        '200':
+          description: Rôle modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoleResponse'
+        '400':
+          description: Nom, permissions ou invariant du rôle ADMIN invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission ADMIN_ACCESS absente.
+        '404':
+          description: Rôle inexistant.
+
+  /api/v1/permission:
+    get:
+      tags:
+        - Administration de la sécurité
+      summary: Lister les permissions
+      description: Retourne le catalogue des permissions, trié par code.
+      operationId: getPermissions
+      responses:
+        '200':
+          description: Liste des permissions, éventuellement vide.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PermissionResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas la permission ADMIN_ACCESS.
+
+  /api/v1/establishments:
+    get:
+      tags:
+        - Établissements
+      summary: Lister les établissements accessibles
+      description: Requiert ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT. L'administrateur global reçoit tous les établissements; le responsable ne reçoit que le sien.
+      operationId: getEstablishments
+      responses:
+        '200':
+          description: Liste des établissements accessibles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EstablishmentResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+    post:
+      tags:
+        - Établissements
+      summary: Créer un établissement
+      description: Réservé à la permission ADMIN_ACCESS.
+      operationId: createEstablishment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEstablishmentRequest'
+      responses:
+        '201':
+          description: Établissement créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstablishmentResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN.
+        '409':
+          description: Le code établissement existe déjà.
+  /api/v1/establishments/{establishmentId}:
+    delete:
+      tags:
+        - Établissements
+      summary: Désactiver un établissement
+      description: Soft-delete; désactive également les membres et leurs comptes, puis révoque leurs refresh tokens. Requiert ADMIN_ACCESS.
+      operationId: deactivateEstablishment
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Établissement et personnel désactivés.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN.
+        '404':
+          description: Établissement introuvable.
+
+  /api/v1/establishments/{establishmentId}/grade-levels:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Lister les niveaux
+      description: Requiert can_grade_level_read; les niveaux sont triés par ordre d'affichage puis par nom.
+      operationId: getGradeLevels
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Niveaux actifs de l'établissement.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GradeLevelResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_grade_level_read absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+    post:
+      tags:
+        - Catalogue scolaire
+      summary: Créer un niveau
+      description: Requiert can_grade_level_create; code et nom sont uniques dans l'établissement, et le code est normalisé en majuscules.
+      operationId: createGradeLevel
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGradeLevelRequest'
+      responses:
+        '201':
+          description: Niveau créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GradeLevelResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_grade_level_create absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+        '409':
+          description: Code ou nom déjà utilisé dans l'établissement.
+  /api/v1/establishments/{establishmentId}/grade-levels/{gradeLevelId}:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Consulter un niveau
+      operationId: getGradeLevel
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: gradeLevelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Niveau.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GradeLevelResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_grade_level_read absente.
+        '404':
+          description: Niveau absent ou hors périmètre.
+    patch:
+      tags:
+        - Catalogue scolaire
+      summary: Modifier un niveau
+      description: Requiert can_grade_level_update.
+      operationId: updateGradeLevel
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: gradeLevelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGradeLevelRequest'
+      responses:
+        '200':
+          description: Niveau modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GradeLevelResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_grade_level_update absente.
+        '404':
+          description: Niveau absent ou hors périmètre.
+        '409':
+          description: Code déjà utilisé dans l'établissement.
+    delete:
+      tags:
+        - Catalogue scolaire
+      summary: Archiver un niveau
+      description: Requiert can_grade_level_delete; refusé si une classe active le référence.
+      operationId: archiveGradeLevel
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: gradeLevelId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Niveau archivé.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_grade_level_delete absente.
+        '404':
+          description: Niveau absent ou hors périmètre.
+        '409':
+          description: Le niveau est utilisé par une classe active.
+
+  /api/v1/establishments/{establishmentId}/subjects:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Lister les matières
+      description: Requiert can_subject_read.
+      operationId: getSubjects
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Matières actives de l'établissement.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubjectResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_subject_read absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+    post:
+      tags:
+        - Catalogue scolaire
+      summary: Créer une matière
+      description: Requiert can_subject_create; le code est unique dans l'établissement et normalisé en majuscules.
+      operationId: createSubject
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSubjectRequest'
+      responses:
+        '201':
+          description: Matière créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_subject_create absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+        '409':
+          description: Code déjà utilisé dans l'établissement.
+  /api/v1/establishments/{establishmentId}/subjects/{subjectId}:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Consulter une matière
+      operationId: getSubject
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Matière.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_subject_read absente.
+        '404':
+          description: Matière absente ou hors périmètre.
+    patch:
+      tags:
+        - Catalogue scolaire
+      summary: Modifier une matière
+      description: Requiert can_subject_update.
+      operationId: updateSubject
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSubjectRequest'
+      responses:
+        '200':
+          description: Matière modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubjectResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_subject_update absente.
+        '404':
+          description: Matière absente ou hors périmètre.
+        '409':
+          description: Code déjà utilisé dans l'établissement.
+    delete:
+      tags:
+        - Catalogue scolaire
+      summary: Archiver une matière
+      description: Requiert can_subject_delete; refusé si une classe active utilise cette matière.
+      operationId: archiveSubject
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Matière archivée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_subject_delete absente.
+        '404':
+          description: Matière absente ou hors périmètre.
+        '409':
+          description: La matière est utilisée par une classe active.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Lister les classes d'une année
+      description: Requiert can_school_class_read.
+      operationId: getSchoolClasses
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Classes actives de l'année scolaire.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SchoolClassResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_school_class_read absente.
+        '404':
+          description: Établissement ou année absente, désactivée ou hors périmètre.
+    post:
+      tags:
+        - Catalogue scolaire
+      summary: Créer une classe
+      description: Requiert can_school_class_create. L'année et le niveau doivent appartenir au même établissement; le code est unique dans l'année et le nom dans le niveau.
+      operationId: createSchoolClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSchoolClassRequest'
+      responses:
+        '201':
+          description: Classe créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchoolClassResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_school_class_create absente.
+        '404':
+          description: Année, niveau ou établissement absent ou hors périmètre.
+        '409':
+          description: Code ou nom déjà utilisé dans l'année/niveau.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Consulter une classe
+      operationId: getSchoolClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Classe.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchoolClassResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_school_class_read absente.
+        '404':
+          description: Classe absente ou hors périmètre.
+    patch:
+      tags:
+        - Catalogue scolaire
+      summary: Modifier une classe
+      description: Requiert can_school_class_update.
+      operationId: updateSchoolClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSchoolClassRequest'
+      responses:
+        '200':
+          description: Classe modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchoolClassResponse'
+        '400':
+          description: Données invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_school_class_update absente.
+        '404':
+          description: Classe, année ou niveau absent ou hors périmètre.
+        '409':
+          description: Code ou nom déjà utilisé dans l'année/niveau.
+    delete:
+      tags:
+        - Catalogue scolaire
+      summary: Archiver une classe
+      description: Requiert can_school_class_delete; les associations conservées ne sont pas supprimées.
+      operationId: archiveSchoolClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Classe archivée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_school_class_delete absente.
+        '404':
+          description: Classe absente ou hors périmètre.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/subjects:
+    get:
+      tags:
+        - Catalogue scolaire
+      summary: Lister les matières d'une classe
+      description: Requiert can_class_subject_read.
+      operationId: getClassSubjects
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Associations actives classe-matière.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SchoolClassSubjectResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_class_subject_read absente.
+        '404':
+          description: Classe absente ou hors périmètre.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/subjects/{subjectId}:
+    put:
+      tags:
+        - Catalogue scolaire
+      summary: Affecter une matière à une classe
+      description: Requiert can_class_subject_assign. Réactive une association précédemment archivée et retourne l'affectation.
+      operationId: assignSubjectToClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Association créée ou réactivée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchoolClassSubjectResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_class_subject_assign absente.
+        '404':
+          description: Classe ou matière absente ou hors périmètre.
+        '409':
+          description: La matière est déjà affectée à cette classe.
+    delete:
+      tags:
+        - Catalogue scolaire
+      summary: Retirer une matière d'une classe
+      description: Requiert can_class_subject_unassign. Archive l'association sans supprimer l'historique.
+      operationId: unassignSubjectFromClass
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: subjectId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Association archivée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_class_subject_unassign absente.
+        '404':
+          description: Association absente ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/school-years:
+    get:
+      tags:
+        - Calendrier scolaire
+      summary: Lister les années scolaires
+      description: Requiert can_academic_year_read. Retourne les années actives de l'établissement.
+      operationId: getAcademicYears
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Années scolaires actives, de la plus récente à la plus ancienne.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AcademicYearResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_year_read absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+    post:
+      tags:
+        - Calendrier scolaire
+      summary: Créer une année scolaire
+      description: Requiert can_academic_year_create. Les dates sont configurables par établissement.
+      operationId: createAcademicYear
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAcademicYearRequest'
+      responses:
+        '201':
+          description: Année scolaire créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcademicYearResponse'
+        '400':
+          description: Corps invalide ou dates incohérentes.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_year_create absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+        '409':
+          description: Nom déjà utilisé dans l'établissement.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}:
+    get:
+      tags:
+        - Calendrier scolaire
+      summary: Consulter une année scolaire
+      operationId: getAcademicYear
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Année scolaire.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcademicYearResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_year_read absente.
+        '404':
+          description: Année absente, archivée ou hors périmètre.
+    patch:
+      tags:
+        - Calendrier scolaire
+      summary: Modifier une année scolaire
+      description: Requiert can_academic_year_update; les dates doivent contenir ses périodes actives.
+      operationId: updateAcademicYear
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAcademicYearRequest'
+      responses:
+        '200':
+          description: Année scolaire modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcademicYearResponse'
+        '400':
+          description: Aucun changement fourni ou dates incohérentes.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_year_update absente.
+        '404':
+          description: Année absente, archivée ou hors périmètre.
+        '409':
+          description: Nom déjà utilisé dans l'établissement.
+    delete:
+      tags:
+        - Calendrier scolaire
+      summary: Archiver une année scolaire
+      description: Requiert can_academic_year_delete. L'archivage conserve l'historique.
+      operationId: archiveAcademicYear
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Année scolaire archivée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_year_delete absente.
+        '404':
+          description: Année absente, déjà archivée ou hors périmètre.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods:
+    get:
+      tags:
+        - Calendrier scolaire
+      summary: Lister les périodes d'une année scolaire
+      description: Requiert can_academic_period_read. Les périodes sont triées par date de début.
+      operationId: getAcademicPeriods
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Périodes actives.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AcademicPeriodResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_period_read absente.
+        '404':
+          description: Année absente, archivée ou hors périmètre.
+    post:
+      tags:
+        - Calendrier scolaire
+      summary: Créer une période
+      description: Requiert can_academic_period_create. La période doit être comprise dans l'année et ne chevaucher aucune période active.
+      operationId: createAcademicPeriod
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAcademicPeriodRequest'
+      responses:
+        '201':
+          description: Période créée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcademicPeriodResponse'
+        '400':
+          description: Dates invalides ou hors année scolaire.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_period_create absente.
+        '404':
+          description: Année absente, archivée ou hors périmètre.
+        '409':
+          description: Nom déjà utilisé ou période chevauchante.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods/{periodId}:
+    patch:
+      tags:
+        - Calendrier scolaire
+      summary: Modifier une période
+      description: Requiert can_academic_period_update; les dates doivent rester dans l'année sans chevauchement.
+      operationId: updateAcademicPeriod
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: periodId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAcademicPeriodRequest'
+      responses:
+        '200':
+          description: Période modifiée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcademicPeriodResponse'
+        '400':
+          description: Aucun changement fourni ou dates invalides.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_period_update absente.
+        '404':
+          description: Période absente, archivée ou hors périmètre.
+        '409':
+          description: Nom déjà utilisé ou période chevauchante.
+    delete:
+      tags:
+        - Calendrier scolaire
+      summary: Archiver une période
+      description: Requiert can_academic_period_delete. L'archivage conserve l'historique.
+      operationId: archiveAcademicPeriod
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: periodId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Période archivée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_academic_period_delete absente.
+        '404':
+          description: Période absente, déjà archivée ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/enrollment-payment-condition:
+    get:
+      tags:
+        - Inscriptions
+      summary: Lire la condition de paiement des inscriptions
+      description: Requiert can_enrollment_payment_condition_read. Sans configuration enregistrée, le mode est NONE.
+      operationId: getEnrollmentPaymentCondition
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Condition de paiement de l'établissement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentPaymentConditionResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_enrollment_payment_condition_read absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+    put:
+      tags:
+        - Inscriptions
+      summary: Configurer la condition de paiement des inscriptions
+      description: Requiert can_enrollment_payment_condition_update. Réévalue les inscriptions en attente.
+      operationId: setEnrollmentPaymentCondition
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollmentPaymentConditionRequest'
+      responses:
+        '200':
+          description: Condition mise à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentPaymentConditionResponse'
+        '400':
+          description: Mode de paiement absent ou invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_enrollment_payment_condition_update absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments:
+    get:
+      tags:
+        - Inscriptions
+      summary: Lister les inscriptions d'une année scolaire
+      description: Requiert can_enrollment_read; les résultats sont triés par date de création.
+      operationId: getEnrollments
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Inscriptions de l'année scolaire.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EnrollmentResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_enrollment_read absente.
+        '404':
+          description: Année scolaire absente, désactivée ou hors périmètre.
+    post:
+      tags:
+        - Inscriptions
+      summary: Inscrire un élève dans une classe
+      description: Une seule classe par élève et par année; le statut peut rester PENDING_PAYMENT selon la condition de l'établissement.
+      operationId: createEnrollment
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnrollmentRequest'
+      responses:
+        '201':
+          description: Élève inscrit.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnrollmentResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_enrollment_create absente.
+        '404':
+          description: Élève, classe, année ou établissement absent, archivé ou hors périmètre.
+        '409':
+          description: L'élève possède déjà une inscription pour cette année scolaire.
+
+  /api/v1/establishments/{establishmentId}/students:
+    get:
+      tags:
+        - Élèves
+      summary: Lister les élèves actifs d'un établissement
+      description: Requiert can_student_read; les résultats sont triés par nom, prénom et numéro.
+      operationId: getStudents
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Élèves actifs de l'établissement.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StudentResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_student_read absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+    post:
+      tags:
+        - Élèves
+      summary: Créer un élève
+      description: Requiert can_student_create. Le numéro d'élève est unique dans l'établissement et normalisé en majuscules.
+      operationId: createStudent
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStudentRequest'
+      responses:
+        '201':
+          description: Élève créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_student_create absente.
+        '404':
+          description: Établissement absent, désactivé ou hors périmètre.
+        '409':
+          description: Numéro d'élève déjà utilisé dans l'établissement.
+  /api/v1/establishments/{establishmentId}/students/{studentId}:
+    get:
+      tags:
+        - Élèves
+      summary: Consulter un élève
+      description: Requiert can_student_read; les fiches absentes, archivées ou hors périmètre sont masquées par 404.
+      operationId: getStudent
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Fiche élève.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_student_read absente.
+        '404':
+          description: Élève absent, archivé ou hors périmètre.
+    patch:
+      tags:
+        - Élèves
+      summary: Modifier un élève
+      description: Requiert can_student_update; au moins un champ doit être fourni.
+      operationId: updateStudent
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStudentRequest'
+      responses:
+        '200':
+          description: Élève modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StudentResponse'
+        '400':
+          description: Corps invalide ou aucun champ fourni.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_student_update absente.
+        '404':
+          description: Élève absent, archivé ou hors périmètre.
+        '409':
+          description: Numéro d'élève déjà utilisé dans l'établissement.
+    delete:
+      tags:
+        - Élèves
+      summary: Archiver un élève
+      description: Requiert can_student_delete. L'archivage est logique et préserve l'historique.
+      operationId: archiveStudent
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Élève archivé.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_student_delete absente.
+        '404':
+          description: Élève absent, déjà archivé ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/payment-methods:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Lister les moyens de paiement
+      description: Requiert can_tuition_read.
+      operationId: getPaymentMethods
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Moyens de paiement actifs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TuitionPaymentMethodResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_read absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+    put:
+      tags:
+        - Frais et paiements
+      summary: Remplacer les moyens de paiement
+      description: Requiert can_payment_method_update. La liste ne peut pas être vide.
+      operationId: replacePaymentMethods
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReplacePaymentMethodsRequest'
+      responses:
+        '200':
+          description: Moyens remplacés.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TuitionPaymentMethodResponse'
+        '400':
+          description: Liste vide ou code invalide/dupliqué.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_payment_method_update absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Lister les définitions de frais
+      description: Requiert can_tuition_read.
+      operationId: getTuitionFees
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Définitions de frais de l'année scolaire.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TuitionFeeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_read absente.
+        '404':
+          description: Année scolaire absente ou hors périmètre.
+    post:
+      tags:
+        - Frais et paiements
+      summary: Définir un frais scolaire
+      description: Requiert can_tuition_create. Crée une créance pour chaque élève inscrit correspondant à la portée.
+      operationId: createTuitionFee
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTuitionFeeRequest'
+      responses:
+        '201':
+          description: Frais et créances initiales créés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FeeCreationResponse'
+        '400':
+          description: Montant, devise, échéance ou portée invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_create absente.
+        '404':
+          description: Année, niveau ou élève absent ou hors périmètre.
+        '409':
+          description: Un frais de même nom existe déjà pour l'année.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/{feeId}/apply:
+    post:
+      tags:
+        - Frais et paiements
+      summary: Appliquer un frais aux inscriptions
+      description: Requiert can_tuition_apply. L'application est idempotente.
+      operationId: applyTuitionFee
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: feeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Application terminée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApplyTuitionFeeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_apply absente.
+        '404':
+          description: Frais ou année absents ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/outstanding:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Lister les soldes impayés
+      description: Requiert can_tuition_outstanding_read; overdue indique si l'échéance est passée.
+      operationId: getOutstandingTuitionFees
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Créances dont le solde est positif.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StudentFeeChargeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_outstanding_read absente.
+        '404':
+          description: Année scolaire absente ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Consulter les frais et paiements d'un élève
+      description: Requiert can_tuition_read; retourne le total payé, le solde et les paiements historiques.
+      operationId: getStudentTuitionFees
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Créances de l'élève.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StudentFeeChargeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_read absente.
+        '404':
+          description: Élève absent ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees/{chargeId}/payments:
+    post:
+      tags:
+        - Frais et paiements
+      summary: Enregistrer un paiement scolaire
+      description: Requiert can_payment_record. Le paiement ne peut pas dépasser le solde dû.
+      operationId: recordTuitionPayment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: chargeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordTuitionPaymentRequest'
+      responses:
+        '201':
+          description: Paiement enregistré et reçu numéroté émis.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TuitionPaymentResponse'
+        '400':
+          description: Montant invalide ou méthode de paiement non configurée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_payment_record absente.
+        '404':
+          description: Élève ou créance absent ou hors périmètre.
+        '409':
+          description: Le paiement dépasse le solde dû.
+
+  /api/v1/establishments/{establishmentId}/payments/{paymentId}/receipt:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Retrouver un reçu de paiement
+      description: Requiert can_payment_receipt_read. Le reçu retourne les données élève figées lors de la créance.
+      operationId: getTuitionPaymentReceipt
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: paymentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Reçu JSON immuable du paiement.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentReceiptResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_payment_receipt_read absente.
+        '404':
+          description: Paiement absent ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/students/{studentId}/guardians:
+    get:
+      tags:
+        - Parents et tuteurs
+      summary: Lister les tuteurs d'un élève
+      description: Requiert can_guardian_read et le périmètre de l'établissement.
+      operationId: getStudentGuardians
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Tuteurs actifs liés à l'élève.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuardianResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_guardian_read absente.
+        '404':
+          description: Élève absent, archivé ou hors périmètre.
+    post:
+      tags:
+        - Parents et tuteurs
+      summary: Lier un tuteur à un élève
+      description: Requiert can_guardian_link. Envoie une invitation au premier lien si le compte parent n'est pas activé.
+      operationId: linkGuardian
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LinkGuardianRequest'
+      responses:
+        '201':
+          description: Tuteur lié et invitation envoyée ou accès existant confirmé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuardianLinkResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_guardian_link absente.
+        '404':
+          description: Élève absent, archivé ou hors périmètre.
+        '409':
+          description: Tuteur déjà lié ou email associé à un autre compte.
+
+  /api/v1/establishments/{establishmentId}/students/{studentId}/guardians/{guardianId}:
+    delete:
+      tags:
+        - Parents et tuteurs
+      summary: Retirer le lien d'un tuteur
+      description: Requiert can_guardian_unlink. Le compte parent reste actif.
+      operationId: unlinkGuardian
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: guardianId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Lien retiré.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_guardian_unlink absente.
+        '404':
+          description: Élève ou lien absent ou hors périmètre.
+
+  /api/v1/guardians/invitations/accept:
+    post:
+      tags:
+        - Parents et tuteurs
+      summary: Accepter une invitation parent
+      description: Route publique; crée le compte parent depuis un jeton à usage unique valable 48 heures.
+      operationId: acceptGuardianInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptGuardianInvitationRequest'
+      responses:
+        '204':
+          description: Compte parent activé.
+        '400':
+          description: Corps invalide ou mot de passe ne respectant pas les contraintes.
+        '401':
+          description: Jeton invalide, expiré ou déjà utilisé.
+        '409':
+          description: Un compte existe déjà pour cette adresse.
+
+  /api/v1/guardians/me/children:
+    get:
+      tags:
+        - Parents et tuteurs
+      summary: Lister les enfants du parent connecté
+      description: Requiert can_guardian_read_children; le périmètre vient de l'identité authentifiée.
+      operationId: getMyChildren
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Élèves actifs liés au tuteur et appartenant à des établissements actifs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GuardianChildResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_guardian_read_children absente.
+
+  /api/v1/establishments/{establishmentId}/positions:
+    get:
+      tags:
+        - Postes
+      summary: Lister les postes d'un établissement
+      description: Requiert can_position_read; le service applique le périmètre de l'établissement.
+      operationId: getPositions
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Postes de l'établissement.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PositionResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte sans autorisation sur l'établissement.
+    post:
+      tags:
+        - Postes
+      summary: Créer un poste dans un établissement
+      description: Requiert can_position_create. Les rôles actifs du catalogue, y compris les rôles personnalisés, sont hérités par les membres; ADMIN et PARENT sont réservés.
+      operationId: createPosition
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePositionRequest'
+      responses:
+        '201':
+          description: Poste créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionResponse'
+        '400':
+          description: Corps invalide ou rôle non attribuable.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte sans autorisation sur l'établissement.
+        '404':
+          description: Établissement introuvable ou désactivé.
+        '409':
+          description: Nom déjà utilisé dans cet établissement.
+  /api/v1/establishments/{establishmentId}/positions/{positionId}:
+    patch:
+      tags:
+        - Postes
+      summary: Renommer un poste
+      description: Requiert can_position_update; le service vérifie le périmètre de l'établissement.
+      operationId: updatePosition
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: positionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePositionRequest'
+      responses:
+        '200':
+          description: Poste renommé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte sans autorisation sur l'établissement.
+        '404':
+          description: Poste absent ou hors établissement.
+        '409':
+          description: Nom déjà utilisé dans cet établissement.
+    delete:
+      tags:
+        - Postes
+      summary: Désactiver un poste
+      description: Requiert can_position_delete. La désactivation est refusée tant que des membres sont rattachés au poste.
+      operationId: deactivatePosition
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: positionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Poste désactivé.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte sans autorisation sur l'établissement.
+        '404':
+          description: Poste absent ou hors établissement.
+        '409':
+          description: Des membres sont encore rattachés au poste.
+  /api/v1/establishments/{establishmentId}/positions/{positionId}/roles:
+    put:
+      tags:
+        - Postes
+      summary: Remplacer les rôles hérités d'un poste
+      description: Requiert can_position_assign_roles. Synchronise les rôles effectifs des comptes actifs de ses titulaires; les rôles directs sont conservés.
+      operationId: updatePositionRoles
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: positionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePositionRolesRequest'
+      responses:
+        '200':
+          description: Rôles du poste remplacés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PositionResponse'
+        '400':
+          description: Rôle inexistant, désactivé ou réservé (ADMIN/PARENT).
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte sans autorisation sur l'établissement.
+        '404':
+          description: Poste absent ou hors établissement.
+
+  /api/v1/employees:
+    get:
+      tags:
+        - Personnel
+      summary: Lister le personnel accessible
+      description: Requiert ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT. L'administrateur global voit tous les établissements; le responsable voit uniquement le sien.
+      operationId: getEmployees
+      responses:
+        '200':
+          description: Liste de fiches de personnel.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EmployeeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+    post:
+      tags:
+        - Personnel
+      summary: Créer une fiche et envoyer une invitation
+      description: Requiert ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT. Un administrateur d'établissement ne peut inviter que dans son établissement et ne peut attribuer directement ESTABLISHMENT_ADMIN; le rôle peut être hérité du poste choisi.
+      operationId: inviteEmployee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEmployeeRequest'
+      responses:
+        '201':
+          description: Fiche créée et invitation envoyée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeInvitationResponse'
+        '400':
+          description: Corps invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission manquante ou fiche/établissement hors périmètre.
+        '409':
+          description: L'email ou le matricule existe déjà.
+        '503':
+          description: Le service de courriel est indisponible.
+  /api/v1/employees/{employeeId}:
+    get:
+      tags:
+        - Personnel
+      summary: Consulter une fiche de personnel
+      operationId: getEmployee
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Fiche visible dans le périmètre de l'appelant.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+        '404':
+          description: Fiche absente ou hors périmètre.
+    patch:
+      tags:
+        - Personnel
+      summary: Modifier les informations d'une fiche
+      description: Mise à jour partielle; au moins un champ est requis. La modification de l'email synchronise le login.
+      operationId: updateEmployee
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEmployeeRequest'
+      responses:
+        '200':
+          description: Fiche mise à jour.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeResponse'
+        '400':
+          description: Aucun champ fourni ou valeur invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+        '404':
+          description: Fiche absente ou hors périmètre.
+        '409':
+          description: Email ou matricule déjà utilisé.
+    delete:
+      tags:
+        - Personnel
+      summary: Désactiver une fiche de personnel
+      description: Soft-delete de la fiche, désactivation du compte associé et révocation de ses refresh tokens.
+      operationId: deactivateEmployee
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Fiche et compte désactivés.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+        '404':
+          description: Fiche absente ou hors périmètre.
+  /api/v1/employees/{employeeId}/roles:
+    put:
+      tags:
+        - Personnel
+      summary: Remplacer les rôles d'un membre du personnel
+      description: Les permissions sont héritées des rôles. ADMIN peut attribuer STAFF ou ESTABLISHMENT_ADMIN; ESTABLISHMENT_ADMIN ne peut attribuer que STAFF et ne peut pas promouvoir un autre administrateur.
+      operationId: updateEmployeeRoles
+      parameters:
+        - name: employeeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEmployeeRolesRequest'
+      responses:
+        '200':
+          description: Rôles remplacés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeResponse'
+        '400':
+          description: Rôle non attribuable, incluant ADMIN.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission manquante ou cible hors périmètre; les rôles directs non attribuables sont refusés en 400.
+        '404':
+          description: Fiche absente ou hors périmètre.
+
+  /api/v1/employees/me:
+    get:
+      tags:
+        - Personnel
+      summary: Obtenir sa propre fiche
+      description: Requiert la permission STAFF_ACCESS.
+      operationId: getCurrentEmployee
+      responses:
+        '200':
+          description: Fiche du membre du personnel connecté.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmployeeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Le compte ne possède pas la permission STAFF_ACCESS.
+        '404':
+          description: Aucun membre du personnel n'est associé au compte.
+
+  /api/v1/employees/invitations/accept:
+    post:
+      tags:
+        - Personnel
+      summary: Accepter une invitation et définir son mot de passe
+      description: Le token est à usage unique et expire après 48 heures. Cette opération ne requiert pas encore de JWT.
+      operationId: acceptEmployeeInvitation
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AcceptEmployeeInvitationRequest'
+      responses:
+        '204':
+          description: Invitation acceptée; le membre peut maintenant se connecter avec son email.
+        '400':
+          description: Token ou mot de passe invalide.
+        '401':
+          description: Invitation inconnue, expirée ou déjà utilisée.
+
+  /actuator/health:
+    get:
+      tags:
+        - Santé
+      summary: Vérifier l'état de santé de l'application
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Application disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: UP
+        '503':
+          description: Application ou dépendance non disponible.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT obtenu par POST /api/v1/login.
+  schemas:
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - login
+        - password
+      properties:
+        login:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+          description: Nom d'utilisateur, obligatoire et non blanc.
+          example: admin-tech
+        password:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+          description: Mot de passe, obligatoire et non blanc.
+    ChangePasswordRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - currentPassword
+        - newPassword
+      properties:
+        currentPassword:
+          type: string
+          minLength: 1
+          pattern: '.*\S.*'
+        newPassword:
+          type: string
+          minLength: 12
+          maxLength: 72
+          description: Au moins 12 caractères et au plus 72 octets après encodage UTF-8; doit différer du mot de passe actuel.
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - accessToken
+        - tokenType
+        - expiresIn
+        - refreshToken
+        - refreshExpiresIn
+      properties:
+        accessToken:
+          type: string
+          description: JWT signé en HS256.
+        tokenType:
+          type: string
+          const: Bearer
+        expiresIn:
+          type: integer
+          format: int64
+          description: Durée de validité du JWT d'accès en secondes.
+          example: 900
+        refreshToken:
+          type: string
+          description: Jeton opaque à conserver de manière sécurisée et à remplacer après chaque renouvellement.
+        refreshExpiresIn:
+          type: integer
+          format: int64
+          description: Durée de validité du refresh token en secondes.
+          example: 2592000
+    RefreshTokenRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+    UserAccountResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - username
+        - enabled
+        - locked
+        - createdAt
+        - updatedAt
+        - lastLoginAt
+        - roles
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        enabled:
+          type: boolean
+        locked:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        lastLoginAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        roles:
+          type: array
+          items:
+            type: string
+          description: Codes des rôles de l'utilisateur.
+    CreateRoleRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - permissionCodes
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type:
+            - string
+            - 'null'
+          maxLength: 255
+        permissionCodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 64
+    UpdateRoleRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - permissionCodes
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type:
+            - string
+            - 'null'
+          maxLength: 255
+        permissionCodes:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            maxLength: 64
+    RoleResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - description
+        - enabled
+        - permissions
+      properties:
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        enabled:
+          type: boolean
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
+    PermissionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - description
+      properties:
+        code:
+          type: string
+        description:
+          type: string
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          description: État de santé de l'application.
+          example: UP
+    CreateEstablishmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+    EstablishmentResponse:
+      type: object
+      required:
+        - id
+        - code
+        - name
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateEnrollmentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - studentId
+        - schoolClassId
+      properties:
+        studentId:
+          type: string
+          format: uuid
+        schoolClassId:
+          type: string
+          format: uuid
+    EnrollmentPaymentConditionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mode
+      properties:
+        mode:
+          type: string
+          enum:
+            - NONE
+            - PARTIAL_PAYMENT
+            - FULL_PAYMENT
+    EnrollmentPaymentConditionResponse:
+      type: object
+      required:
+        - establishmentId
+        - mode
+      properties:
+        establishmentId:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum:
+            - NONE
+            - PARTIAL_PAYMENT
+            - FULL_PAYMENT
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    EnrollmentResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - studentId
+        - academicYearId
+        - schoolClassId
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        schoolClassId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - PENDING_PAYMENT
+            - ACTIVE
+        createdAt:
+          type: string
+          format: date-time
+    CreateStudentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - firstName
+        - lastName
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+    UpdateStudentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+    StudentResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - studentNumber
+        - firstName
+        - lastName
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateTuitionFeeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - amount
+        - currency
+        - dueDate
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        amount:
+          type: number
+          exclusiveMinimum: 0
+          multipleOf: 0.01
+        currency:
+          type: string
+          pattern: '^[A-Za-z]{3}$'
+        dueDate:
+          type: string
+          format: date
+        gradeLevelId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        studentId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+    TuitionFeeResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - academicYearId
+        - name
+        - amount
+        - currency
+        - dueDate
+        - scope
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        dueDate:
+          type: string
+          format: date
+        scope:
+          type: string
+          enum:
+            - ACADEMIC_YEAR
+            - GRADE_LEVEL
+            - STUDENT
+        gradeLevelId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        studentId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    FeeCreationResponse:
+      type: object
+      required:
+        - fee
+        - chargesCreated
+      properties:
+        fee:
+          $ref: '#/components/schemas/TuitionFeeResponse'
+        chargesCreated:
+          type: integer
+          minimum: 0
+    ApplyTuitionFeeResponse:
+      type: object
+      required:
+        - chargesCreated
+      properties:
+        chargesCreated:
+          type: integer
+          minimum: 0
+    ReplacePaymentMethodsRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - methods
+      properties:
+        methods:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PaymentMethodInputRequest'
+    PaymentMethodInputRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+          pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    TuitionPaymentMethodResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - code
+        - name
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+    RecordTuitionPaymentRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - amount
+        - paymentMethodCode
+      properties:
+        amount:
+          type: number
+          exclusiveMinimum: 0
+          multipleOf: 0.01
+        paymentMethodCode:
+          type: string
+          minLength: 1
+          maxLength: 40
+        reference:
+          type: string
+          maxLength: 120
+    TuitionPaymentResponse:
+      type: object
+      required:
+        - id
+        - receiptNumber
+        - amount
+        - currency
+        - paymentMethodCode
+        - receivedAt
+        - recordedBy
+      properties:
+        id:
+          type: string
+          format: uuid
+        receiptNumber:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        paymentMethodCode:
+          type: string
+        reference:
+          type:
+            - string
+            - 'null'
+        receivedAt:
+          type: string
+          format: date-time
+        recordedBy:
+          type: string
+    StudentFeeChargeResponse:
+      type: object
+      required:
+        - id
+        - feeId
+        - establishmentId
+        - academicYearId
+        - studentId
+        - studentNumber
+        - studentFirstName
+        - studentLastName
+        - name
+        - amount
+        - currency
+        - dueDate
+        - totalPaid
+        - balance
+        - overdue
+        - payments
+      properties:
+        id:
+          type: string
+          format: uuid
+        feeId:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        studentFirstName:
+          type: string
+        studentLastName:
+          type: string
+        name:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        dueDate:
+          type: string
+          format: date
+        totalPaid:
+          type: number
+        balance:
+          type: number
+        overdue:
+          type: boolean
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/TuitionPaymentResponse'
+    PaymentReceiptResponse:
+      type: object
+      required:
+        - receiptNumber
+        - paymentId
+        - establishmentId
+        - studentId
+        - studentNumber
+        - studentFirstName
+        - studentLastName
+        - feeName
+        - amountPaid
+        - currency
+        - paymentMethodCode
+        - receivedAt
+        - recordedBy
+        - chargeAmount
+        - balanceAfterPayment
+        - dueDate
+      properties:
+        receiptNumber:
+          type: string
+        paymentId:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        studentFirstName:
+          type: string
+        studentLastName:
+          type: string
+        feeName:
+          type: string
+        amountPaid:
+          type: number
+        currency:
+          type: string
+        paymentMethodCode:
+          type: string
+        reference:
+          type:
+            - string
+            - 'null'
+        receivedAt:
+          type: string
+          format: date-time
+        recordedBy:
+          type: string
+        chargeAmount:
+          type: number
+        balanceAfterPayment:
+          type: number
+        dueDate:
+          type: string
+          format: date
+    LinkGuardianRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - firstName
+        - lastName
+        - email
+      properties:
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    GuardianResponse:
+      type: object
+      required:
+        - id
+        - firstName
+        - lastName
+        - email
+      properties:
+        id:
+          type: string
+          format: uuid
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+    GuardianLinkResponse:
+      type: object
+      required:
+        - guardian
+        - accessStatus
+      properties:
+        guardian:
+          $ref: '#/components/schemas/GuardianResponse'
+        accessStatus:
+          type: string
+          enum:
+            - INVITATION_SENT
+            - ACCESS_ALREADY_ACTIVE
+    AcceptGuardianInvitationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - token
+        - password
+      properties:
+        token:
+          type: string
+        password:
+          type: string
+          minLength: 12
+          maxLength: 72
+          description: Limite de 72 octets après encodage UTF-8.
+    GuardianChildResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - studentNumber
+        - firstName
+        - lastName
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+    CreateGradeLevelRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+        - displayOrder
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        displayOrder:
+          type: integer
+          minimum: 0
+    UpdateGradeLevelRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        displayOrder:
+          type: integer
+          minimum: 0
+    GradeLevelResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - code
+        - name
+        - displayOrder
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        displayOrder:
+          type: integer
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateSubjectRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    UpdateSubjectRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    SubjectResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - code
+        - name
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateSchoolClassRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - gradeLevelId
+        - code
+        - name
+      properties:
+        gradeLevelId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    UpdateSchoolClassRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        gradeLevelId:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    SchoolClassResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - academicYearId
+        - gradeLevelId
+        - code
+        - name
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        gradeLevelId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SchoolClassSubjectResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - schoolClassId
+        - subjectId
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        schoolClassId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateAcademicYearRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - startsOn
+        - endsOn
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+    UpdateAcademicYearRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+    AcademicYearResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - name
+        - startsOn
+        - endsOn
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateAcademicPeriodRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - startsOn
+        - endsOn
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+    UpdateAcademicPeriodRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+    AcademicPeriodResponse:
+      type: object
+      required:
+        - id
+        - academicYearId
+        - name
+        - startsOn
+        - endsOn
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        startsOn:
+          type: string
+          format: date
+        endsOn:
+          type: string
+          format: date
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreatePositionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        roleCodes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+    UpdatePositionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    UpdatePositionRolesRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - roleCodes
+      properties:
+        roleCodes:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 64
+            pattern: '^[A-Za-z][A-Za-z0-9_]*$'
+    PositionResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - name
+        - enabled
+        - roleCodes
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        enabled:
+          type: boolean
+        roleCodes:
+          type: array
+          items:
+            type: string
+            enum:
+              - STAFF
+              - ESTABLISHMENT_ADMIN
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CreateEmployeeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - employeeNumber
+        - firstName
+        - lastName
+        - email
+        - positionId
+      properties:
+        employeeNumber:
+          type: string
+          minLength: 1
+          maxLength: 40
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+          maxLength: 254
+        positionId:
+          type: string
+          format: uuid
+        directRoleCodes:
+          type: array
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - STAFF
+              - ESTABLISHMENT_ADMIN
+    UpdateEmployeeRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        employeeNumber:
+          type: string
+          minLength: 1
+          maxLength: 40
+          pattern: '.*\S.*'
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '.*\S.*'
+        email:
+          type: string
+          format: email
+          minLength: 1
+          maxLength: 254
+          pattern: '.*\S.*'
+        positionId:
+          type: string
+          format: uuid
+    UpdateEmployeeRolesRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - roleCodes
+      properties:
+        roleCodes:
+          type: array
+          minItems: 1
+          maxItems: 2
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - STAFF
+              - ESTABLISHMENT_ADMIN
+    EmployeeResponse:
+      type: object
+      required:
+        - id
+        - employeeNumber
+        - firstName
+        - lastName
+        - email
+        - positionId
+        - positionName
+        - enabled
+        - establishmentAdmin
+        - directRoleCodes
+        - roles
+        - establishmentId
+        - loginEnabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        employeeNumber:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        email:
+          type: string
+          format: email
+        positionId:
+          type: string
+          format: uuid
+        positionName:
+          type: string
+        enabled:
+          type: boolean
+        establishmentAdmin:
+          type: boolean
+        directRoleCodes:
+          type: array
+          items:
+            type: string
+            enum:
+              - STAFF
+              - ESTABLISHMENT_ADMIN
+        roles:
+          type: array
+          description: Union des rôles directs et des rôles hérités du poste.
+          items:
+            type: string
+            enum:
+              - STAFF
+              - ESTABLISHMENT_ADMIN
+        establishmentId:
+          type: string
+          format: uuid
+        loginEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    EmployeeInvitationResponse:
+      type: object
+      required:
+        - employeeId
+        - status
+      properties:
+        employeeId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          const: INVITATION_SENT
+    AcceptEmployeeInvitationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - token
+        - password
+      properties:
+        token:
+          type: string
+          minLength: 1
+          maxLength: 100
+        password:
+          type: string
+          minLength: 12
+          maxLength: 72
+          description: 72 octets maximum une fois encodé en UTF-8.
+security:
+  - bearerAuth: []

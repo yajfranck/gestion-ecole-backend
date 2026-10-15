@@ -1,0 +1,33 @@
+spring:
+  application:
+    name: gestion-ecole
+  flyway:
+    locations: classpath:db/migration
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:1025}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:false}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
+
+security:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: gestion-ecole
+    access-token-ttl: PT15M
+    refresh-token-ttl: P30D
+
+app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
+  employees:
+    invitation-accept-url: ${EMPLOYEE_INVITATION_ACCEPT_URL:${STAFF_INVITATION_ACCEPT_URL:http://localhost:3000/accept-invitation}}
+    invitation-from: ${EMPLOYEE_INVITATION_FROM:${STAFF_INVITATION_FROM:no-reply@gestion-ecole.local}}
+  guardians:
+    invitation-accept-url: ${GUARDIAN_INVITATION_ACCEPT_URL:http://localhost:3000/accept-guardian-invitation}
+    invitation-from: ${GUARDIAN_INVITATION_FROM:no-reply@gestion-ecole.local}

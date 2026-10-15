@@ -1,0 +1,26 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:gestion_ecole;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations:
+      - classpath:db/migration
+      - classpath:db/migration-local
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+security:
+  jwt:
+    secret: ${JWT_SECRET:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=}
+
+logging:
+  level:
+    "[com.galactique.gestionecole.security.infrastructure.api.AuthenticationController]": DEBUG

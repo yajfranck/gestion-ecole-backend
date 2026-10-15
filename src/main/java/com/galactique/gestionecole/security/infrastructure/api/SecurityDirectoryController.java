@@ -1,0 +1,74 @@
+package com.galactique.gestionecole.security.infrastructure.api;
+
+import java.util.Comparator;
+import java.util.List;
+
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.galactique.gestionecole.security.domain.Permission;
+import com.galactique.gestionecole.security.domain.Role;
+import com.galactique.gestionecole.security.domain.SecurityDirectoryRepository;
+import com.galactique.gestionecole.security.domain.UserAccount;
+
+@RestController
+@RequestMapping("/api/v1")
+public class SecurityDirectoryController {
+	private final SecurityDirectoryRepository securityDirectoryRepository;
+
+	public SecurityDirectoryController(SecurityDirectoryRepository securityDirectoryRepository) {
+		this.securityDirectoryRepository = securityDirectoryRepository;
+	}
+
+	/** Retourne les comptes utilisateurs et leurs rôles. */
+	@PreAuthorize("hasAuthority('ADMIN_ACCESS')")
+	@GetMapping("/user")
+	public List<UserAccountResponse> getUsers() {
+		return securityDirectoryRepository.findAllUsers().stream()
+			.sorted(Comparator.comparing(UserAccount::username))
+			.map(user -> new UserAccountResponse(
+				user.id(),
+				user.username(),
+				user.enabled(),
+				user.locked(),
+				user.createdAt(),
+				user.updatedAt(),
+				user.lastLoginAt(),
+				user.roles().stream().map(Role::code).sorted().toList()))
+			.toList();
+	}
+
+	/** Retourne les rôles et les permissions qui leur sont associées. */
+	@PreAuthorize("hasAuthority('ADMIN_ACCESS')")
+	@GetMapping("/role")
+	public List<RoleResponse> getRoles() {
+		return securityDirectoryRepository.findAllRoles().stream()
+			.sorted(Comparator.comparing(Role::code))
+			.map(role -> new RoleResponse(
+				role.code(),
+				role.name(),
+				role.description(),
+				role.enabled(),
+				role.permissions().stream()
+					.sorted(Comparator.comparing(Permission::code))
+					.map(this::toResponse)
+					.toList()))
+			.toList();
+	}
+
+	/** Retourne le catalogue des permissions disponibles. */
+	@PreAuthorize("hasAuthority('ADMIN_ACCESS')")
+	@GetMapping("/permission")
+	public List<PermissionResponse> getPermissions() {
+		return securityDirectoryRepository.findAllPermissions().stream()
+			.sorted(Comparator.comparing(Permission::code))
+			.map(this::toResponse)
+			.toList();
+	}
+
+	private PermissionResponse toResponse(Permission permission) {
+		return new PermissionResponse(permission.code(), permission.description());
+	}
+}

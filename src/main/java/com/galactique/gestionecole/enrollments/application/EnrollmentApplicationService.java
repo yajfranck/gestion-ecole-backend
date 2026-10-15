@@ -1,0 +1,113 @@
+package com.galactique.gestionecole.enrollments.application;
+
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.galactique.gestionecole.employees.application.EmployeeActor;
+import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarAccessDeniedException;
+import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarNotFoundException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogAccessDeniedException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarApplicationService;
+import com.galactique.gestionecole.students.application.StudentAccessDeniedException;
+import com.galactique.gestionecole.students.application.StudentApplicationService;
+import com.galactique.gestionecole.students.application.StudentNotFoundException;
+import com.galactique.gestionecole.students.domain.Student;
+import com.galactique.gestionecole.enrollments.domain.Enrollment;
+import com.galactique.gestionecole.enrollments.domain.EnrollmentRepository;
+
+@Service
+public class EnrollmentApplicationService {
+	private final EnrollmentRepository enrollmentRepository;
+	private final StudentApplicationService studentApplicationService;
+	private final SchoolCalendarApplicationService schoolCalendarApplicationService;
+	private final SchoolCatalogApplicationService schoolCatalogApplicationService;
+	private final EnrollmentFeeChargeGateway enrollmentFeeChargeGateway;
+
+	public EnrollmentApplicationService(EnrollmentRepository enrollmentRepository,
+		StudentApplicationService studentApplicationService,
+		SchoolCalendarApplicationService schoolCalendarApplicationService,
+		SchoolCatalogApplicationService schoolCatalogApplicationService,
+		EnrollmentFeeChargeGateway enrollmentFeeChargeGateway) {
+		this.enrollmentRepository = enrollmentRepository;
+		this.studentApplicationService = studentApplicationService;
+		this.schoolCalendarApplicationService = schoolCalendarApplicationService;
+		this.schoolCatalogApplicationService = schoolCatalogApplicationService;
+		this.enrollmentFeeChargeGateway = enrollmentFeeChargeGateway;
+	}
+
+	@Transactional(readOnly = true)
+	public List<Enrollment> findAll(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
+		validateAcademicYear(establishmentId, academicYearId, actor);
+		return enrollmentRepository.findAllByEstablishmentIdAndAcademicYearId(establishmentId, academicYearId);
+	}
+
+	@Transactional(readOnly = true)
+	public List<Student> findStudentsByClass(UUID establishmentId, UUID academicYearId,
+		UUID schoolClassId, EmployeeActor actor) {
+		validateAcademicYear(establishmentId, academicYearId, actor);
+		try {
+			schoolCatalogApplicationService.findClass(establishmentId, academicYearId, schoolClassId, actor);
+		} catch (SchoolCatalogNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (SchoolCatalogAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
+		}
+		List<Student> students = new java.util.ArrayList<>();
+		for (Enrollment enrollment : enrollmentRepository.findAllByEstablishmentIdAndAcademicYearId(
+			establishmentId, academicYearId)) {
+			if (!enrollment.schoolClassId().equals(schoolClassId)) {
+				continue;
+			}
+			try {
+				students.add(studentApplicationService.findById(establishmentId, enrollment.studentId(), actor));
+			} catch (StudentNotFoundException ignored) {
+				continue;
+			} catch (StudentAccessDeniedException exception) {
+				throw new EnrollmentAccessDeniedException();
+			}
+		}
+		return List.copyOf(students);
+	}
+
+	@Transactional
+	public Enrollment create(UUID establishmentId, UUID academicYearId, CreateEnrollmentCommand command,
+		EmployeeActor actor) {
+		validateAcademicYear(establishmentId, academicYearId, actor);
+		try {
+			studentApplicationService.findById(establishmentId, command.studentId(), actor);
+			schoolCatalogApplicationService.findClass(establishmentId, academicYearId, command.schoolClassId(), actor);
+		} catch (StudentNotFoundException | AcademicCalendarNotFoundException | SchoolCatalogNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (StudentAccessDeniedException | AcademicCalendarAccessDeniedException
+			| SchoolCatalogAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
+		}
+		if (enrollmentRepository.existsByStudentIdAndAcademicYearId(command.studentId(), academicYearId)) {
+			throw new EnrollmentConflictException();
+		}
+		try {
+			Enrollment enrollment = enrollmentRepository.save(establishmentId, command.studentId(), academicYearId,
+				command.schoolClassId());
+			enrollmentFeeChargeGateway.applyExistingFees(enrollment);
+			return enrollment;
+		} catch (DataIntegrityViolationException exception) {
+			throw new EnrollmentConflictException();
+		}
+	}
+
+	private void validateAcademicYear(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
+		try {
+			schoolCalendarApplicationService.findYear(establishmentId, academicYearId, actor);
+		} catch (AcademicCalendarNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (AcademicCalendarAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
+		}
+	}
+}

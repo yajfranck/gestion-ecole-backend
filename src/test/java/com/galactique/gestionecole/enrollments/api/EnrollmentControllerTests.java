@@ -1,0 +1,163 @@
+package com.galactique.gestionecole.enrollments.api;
+
+import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.util.UUID;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+import com.galactique.gestionecole.establishments.domain.Establishment;
+import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.jayway.jsonpath.JsonPath;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("local")
+class EnrollmentControllerTests {
+	private final MockMvc mockMvc;
+	private final EstablishmentRepository establishmentRepository;
+
+	@Autowired
+	EnrollmentControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository) {
+		this.mockMvc = mockMvc;
+		this.establishmentRepository = establishmentRepository;
+	}
+
+	@Test
+	void enrollsStudentOncePerYearAndKeepsPreviousYearEnrollment() throws Exception {
+		Establishment establishment = createEstablishment();
+		String establishmentUrl = "/api/v1/establishments/" + establishment.id();
+		String studentResponse = mockMvc.perform(post(establishmentUrl + "/students")
+			.with(administrator("can_student_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"firstName\":\"Ada\",\"lastName\":\"Lovelace\"}"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		String studentId = JsonPath.read(studentResponse, "$.id");
+		String gradeLevelResponse = mockMvc.perform(post(establishmentUrl + "/grade-levels")
+			.with(administrator("can_grade_level_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"P1\",\"name\":\"Primary 1\",\"displayOrder\":1}"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		String gradeLevelId = JsonPath.read(gradeLevelResponse, "$.id");
+
+		String firstYearId = createYear(establishmentUrl, "2025-2026");
+		String firstClassId = createClass(establishmentUrl, firstYearId, gradeLevelId, "P1-A");
+		String firstYearEnrollmentsUrl = enrollmentUrl(establishmentUrl, firstYearId);
+		String enrollmentRequest = enrollmentRequest(studentId, firstClassId);
+
+		mockMvc.perform(post(firstYearEnrollmentsUrl)
+			.with(administrator("can_enrollment_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(enrollmentRequest))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.studentId").value(studentId))
+			.andExpect(jsonPath("$.schoolClassId").value(firstClassId));
+
+		mockMvc.perform(post(firstYearEnrollmentsUrl)
+			.with(administrator("can_enrollment_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(enrollmentRequest))
+			.andExpect(status().isConflict());
+
+		mockMvc.perform(get(firstYearEnrollmentsUrl).with(administrator("can_enrollment_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(1)));
+
+		mockMvc.perform(get(establishmentUrl + "/school-years/" + firstYearId
+			+ "/classes/" + firstClassId + "/students")
+			.with(administrator("can_enrollment_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(1)))
+			.andExpect(jsonPath("$[0].id").value(studentId));
+
+		String secondYearId = createYear(establishmentUrl, "2026-2027");
+		String secondClassId = createClass(establishmentUrl, secondYearId, gradeLevelId, "P1-B");
+		mockMvc.perform(post(enrollmentUrl(establishmentUrl, secondYearId))
+			.with(administrator("can_enrollment_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(enrollmentRequest(studentId, firstClassId)))
+			.andExpect(status().isNotFound());
+
+		mockMvc.perform(post(enrollmentUrl(establishmentUrl, secondYearId))
+			.with(administrator("can_enrollment_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(enrollmentRequest(studentId, secondClassId)))
+			.andExpect(status().isCreated());
+
+		mockMvc.perform(get(firstYearEnrollmentsUrl).with(administrator("can_enrollment_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(1)))
+			.andExpect(jsonPath("$[0].academicYearId").value(firstYearId));
+	}
+
+	@Test
+	void staffWithoutEnrollmentPermissionCannotReadEnrollments() throws Exception {
+		Establishment establishment = createEstablishment();
+		mockMvc.perform(get(enrollmentUrl("/api/v1/establishments/" + establishment.id(),
+			UUID.randomUUID().toString()))
+			.with(user("teacher@example.org").authorities(new SimpleGrantedAuthority("STAFF_ACCESS"))))
+			.andExpect(status().isForbidden());
+	}
+
+	private String createYear(String establishmentUrl, String name) throws Exception {
+		String response = mockMvc.perform(post(establishmentUrl + "/school-years")
+			.with(administrator("can_academic_year_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"name\":\"" + name + "\",\"startsOn\":\"2025-09-01\",\"endsOn\":\"2026-06-30\"}"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		return JsonPath.read(response, "$.id");
+	}
+
+	private String createClass(String establishmentUrl, String academicYearId, String gradeLevelId,
+		String code) throws Exception {
+		String response = mockMvc.perform(post(establishmentUrl + "/school-years/" + academicYearId + "/classes")
+			.with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"gradeLevelId\":\"" + gradeLevelId + "\",\"code\":\"" + code
+				+ "\",\"name\":\"Primary 1 " + code + "\"}"))
+			.andExpect(status().isCreated())
+			.andReturn()
+			.getResponse()
+			.getContentAsString();
+		return JsonPath.read(response, "$.id");
+	}
+
+	private Establishment createEstablishment() {
+		String code = "ENR-" + UUID.randomUUID().toString().substring(0, 8);
+		return establishmentRepository.save(code, "Enrollment Test School");
+	}
+
+	private static String enrollmentUrl(String establishmentUrl, String academicYearId) {
+		return establishmentUrl + "/school-years/" + academicYearId + "/enrollments";
+	}
+
+	private static String enrollmentRequest(String studentId, String schoolClassId) {
+		return "{\"studentId\":\"" + studentId + "\",\"schoolClassId\":\"" + schoolClassId + "\"}";
+	}
+
+	private static org.springframework.test.web.servlet.request.RequestPostProcessor administrator(String permission) {
+		return user("admin-tech").authorities(
+			new SimpleGrantedAuthority("ADMIN_ACCESS"), new SimpleGrantedAuthority(permission));
+	}
+}

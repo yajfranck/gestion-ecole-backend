@@ -1,0 +1,1 @@
+CREATE SEQUENCE student_number_sequence START WITH 1 INCREMENT BY 1;
