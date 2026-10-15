@@ -22,6 +22,9 @@ public class RoleEntity {
 	@GeneratedValue(strategy = GenerationType.UUID)
 	private UUID id;
 
+	@Column(name = "establishment_id")
+	private UUID establishmentId;
+
 	@Column(nullable = false, unique = true, length = 64)
 	private String code;
 
@@ -45,15 +48,25 @@ public class RoleEntity {
 	}
 
 	RoleEntity(String code, String name, String description, boolean enabled, Set<PermissionEntity> permissions) {
+		this(code, name, description, enabled, permissions, null);
+	}
+
+	RoleEntity(String code, String name, String description, boolean enabled, Set<PermissionEntity> permissions,
+		UUID establishmentId) {
 		this.code = code;
 		this.name = name;
 		this.description = description;
 		this.enabled = enabled;
 		this.permissions = new LinkedHashSet<>(permissions);
+		this.establishmentId = establishmentId;
 	}
 
 	public UUID getId() {
 		return id;
+	}
+
+	public UUID getEstablishmentId() {
+		return establishmentId;
 	}
 
 	public String getCode() {

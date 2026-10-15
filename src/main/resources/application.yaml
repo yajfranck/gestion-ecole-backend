@@ -4,16 +4,16 @@ spring:
   flyway:
     locations: classpath:db/migration
   mail:
-    host: ${SMTP_HOST:localhost}
-    port: ${SMTP_PORT:1025}
-    username: ${SMTP_USERNAME:}
+    host: ${SMTP_HOST:smtp.mail.yahoo.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USERNAME:franckyaj@yahoo.com}
     password: ${SMTP_PASSWORD:}
     properties:
       mail:
         smtp:
-          auth: ${SMTP_AUTH:false}
+          auth: ${SMTP_AUTH:true}
           starttls:
-            enable: ${SMTP_STARTTLS:false}
+            enable: ${SMTP_STARTTLS:true}
 
 security:
   jwt:
@@ -27,7 +27,7 @@ app:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
   employees:
     invitation-accept-url: ${EMPLOYEE_INVITATION_ACCEPT_URL:${STAFF_INVITATION_ACCEPT_URL:http://localhost:3000/accept-invitation}}
-    invitation-from: ${EMPLOYEE_INVITATION_FROM:${STAFF_INVITATION_FROM:no-reply@gestion-ecole.local}}
+    invitation-from: ${EMPLOYEE_INVITATION_FROM:${STAFF_INVITATION_FROM:${SMTP_USERNAME:franckyaj@yahoo.com}}}
   guardians:
     invitation-accept-url: ${GUARDIAN_INVITATION_ACCEPT_URL:http://localhost:3000/accept-guardian-invitation}
-    invitation-from: ${GUARDIAN_INVITATION_FROM:no-reply@gestion-ecole.local}
+    invitation-from: ${GUARDIAN_INVITATION_FROM:${SMTP_USERNAME:franckyaj@yahoo.com}}

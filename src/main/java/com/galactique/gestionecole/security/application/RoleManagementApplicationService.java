@@ -46,8 +46,8 @@ public class RoleManagementApplicationService {
 		Role current = securityDirectoryRepository.findRoleByCode(normalizedCode)
 			.orElseThrow(RoleNotFoundException::new);
 		Set<String> permissionCodes = new LinkedHashSet<>(command.permissionCodes());
-		if ("ADMIN".equals(normalizedCode) && !permissionCodes.contains("ADMIN_ACCESS")) {
-			throw new InvalidRoleException("The ADMIN role must retain ADMIN_ACCESS");
+		if ("ADMIN".equals(normalizedCode) && permissionCodes.contains("ADMIN_ACCESS")) {
+			throw new InvalidRoleException("The ADMIN role cannot have ADMIN_ACCESS");
 		}
 		Role updated = buildRole(normalizedCode, command.name(), command.description(),
 			command.permissionCodes(), current.enabled());

@@ -36,7 +36,8 @@ public class SecurityPersistenceMapper {
 			entity.getName(),
 			entity.getDescription(),
 			entity.isEnabled(),
-			permissions);
+			permissions,
+			entity.getEstablishmentId());
 	}
 
 	public Permission toDomain(PermissionEntity entity) {

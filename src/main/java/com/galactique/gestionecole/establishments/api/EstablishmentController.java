@@ -17,7 +17,9 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.galactique.gestionecole.establishments.application.EstablishmentApplicationService;
-import com.galactique.gestionecole.establishments.domain.Establishment;
+import com.galactique.gestionecole.establishments.application.EstablishmentOnboardingApplicationService;
+import com.galactique.gestionecole.establishments.api.dto.EstablishmentOnboardingResponse;
+import com.galactique.gestionecole.establishments.api.dto.OnboardEstablishmentRequest;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 
@@ -27,30 +29,34 @@ import jakarta.validation.Valid;
 @RequestMapping("/api/v1/establishments")
 public class EstablishmentController {
 	private final EstablishmentApplicationService establishmentApplicationService;
+	private final EstablishmentOnboardingApplicationService establishmentOnboardingApplicationService;
 	private final EmployeeApplicationService employeeApplicationService;
 
 	public EstablishmentController(EstablishmentApplicationService establishmentApplicationService,
+		EstablishmentOnboardingApplicationService establishmentOnboardingApplicationService,
 		EmployeeApplicationService employeeApplicationService) {
 		this.establishmentApplicationService = establishmentApplicationService;
+		this.establishmentOnboardingApplicationService = establishmentOnboardingApplicationService;
 		this.employeeApplicationService = employeeApplicationService;
 	}
 
 	/** Retourne les établissements accessibles à l’appelant. */
 	@GetMapping
-	@PreAuthorize("hasAuthority('ADMIN_ACCESS') or hasAuthority('ESTABLISHMENT_STAFF_MANAGEMENT')")
+	@PreAuthorize("hasAuthority('ADMIN_ACCESS') or hasAuthority('can_establishment_read') or hasAuthority('ESTABLISHMENT_STAFF_MANAGEMENT')")
 	public List<EstablishmentResponse> getEstablishments(Authentication authentication) {
 		return employeeApplicationService.findEstablishments(toActor(authentication)).stream()
 			.map(EstablishmentResponse::from)
 			.toList();
 	}
 
-	/** Crée un établissement à partir de son code et de son nom. */
+	/** Crée un établissement et invite son premier administrateur. */
 	@PostMapping
-	@PreAuthorize("hasAuthority('ADMIN_ACCESS')")
+	@PreAuthorize("hasRole('ADMIN') and hasAuthority('can_establishment_onboard')")
 	@ResponseStatus(HttpStatus.CREATED)
-	public EstablishmentResponse createEstablishment(@Valid @RequestBody CreateEstablishmentRequest request) {
-		Establishment establishment = establishmentApplicationService.create(request.code(), request.name());
-		return EstablishmentResponse.from(establishment);
+	public EstablishmentOnboardingResponse onboardEstablishment(@Valid @RequestBody OnboardEstablishmentRequest request,
+		Authentication authentication) {
+		return EstablishmentOnboardingResponse.from(
+			establishmentOnboardingApplicationService.onboard(request, authentication.getName()));
 	}
 
 	/** Désactive un établissement ainsi que les accès de ses membres. */
@@ -62,7 +68,8 @@ public class EstablishmentController {
 	}
 
 	private EmployeeActor toActor(Authentication authentication) {
-		boolean globalAdministrator = hasAuthority(authentication, "ADMIN_ACCESS");
+		boolean globalAdministrator = hasAuthority(authentication, "ADMIN_ACCESS")
+			|| hasAuthority(authentication, "can_establishment_read");
 		boolean establishmentAdministrator = hasAuthority(authentication, "ESTABLISHMENT_STAFF_MANAGEMENT");
 		return new EmployeeActor(authentication.getName(), globalAdministrator, establishmentAdministrator);
 	}

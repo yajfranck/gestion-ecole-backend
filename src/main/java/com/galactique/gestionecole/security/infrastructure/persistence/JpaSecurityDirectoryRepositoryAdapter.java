@@ -2,6 +2,7 @@ package com.galactique.gestionecole.security.infrastructure.persistence;
 
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Repository;
@@ -44,22 +45,37 @@ public class JpaSecurityDirectoryRepositoryAdapter implements SecurityDirectoryR
 
 	@Override
 	@Transactional(readOnly = true)
+	public List<Role> findRolesForEstablishment(UUID establishmentId) {
+		return roleJpaRepository.findAllForEstablishment(establishmentId).stream().map(mapper::toDomain).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
 	public java.util.Optional<Role> findRoleByCode(String code) {
 		return roleJpaRepository.findByCode(code).map(mapper::toDomain);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public java.util.Optional<Role> findRoleByCodeAndEstablishmentId(String code, UUID establishmentId) {
+		return roleJpaRepository.findByCodeAndEstablishmentId(code, establishmentId).map(mapper::toDomain);
 	}
 
 	@Override
 	@Transactional
 	public Role createRole(Role role) {
 		Set<PermissionEntity> permissions = resolvePermissionEntities(role);
-		RoleEntity entity = new RoleEntity(role.code(), role.name(), role.description(), role.enabled(), permissions);
+		RoleEntity entity = new RoleEntity(role.code(), role.name(), role.description(), role.enabled(), permissions,
+			role.establishmentId());
 		return mapper.toDomain(roleJpaRepository.saveAndFlush(entity));
 	}
 
 	@Override
 	@Transactional
 	public Role updateRole(Role role) {
-		RoleEntity entity = roleJpaRepository.findByCode(role.code()).orElseThrow();
+		RoleEntity entity = role.establishmentId() == null
+			? roleJpaRepository.findByCode(role.code()).orElseThrow()
+			: roleJpaRepository.findByCodeAndEstablishmentId(role.code(), role.establishmentId()).orElseThrow();
 		entity.updateDetails(role.name(), role.description(), resolvePermissionEntities(role));
 		return mapper.toDomain(entity);
 	}

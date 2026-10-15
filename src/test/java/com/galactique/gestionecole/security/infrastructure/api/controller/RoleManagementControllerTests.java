@@ -61,7 +61,7 @@ class RoleManagementControllerTests {
 	}
 
 	@Test
-	void rejectsDuplicateCodesUnknownPermissionsAndAdminLockout() throws Exception {
+	void rejectsDuplicateCodesUnknownPermissionsAndPlatformAccessForAdmin() throws Exception {
 		String roleCode = uniqueRoleCode();
 		mockMvc.perform(post("/api/v1/role")
 			.with(administrator())
@@ -87,12 +87,12 @@ class RoleManagementControllerTests {
 		mockMvc.perform(put("/api/v1/role/ADMIN")
 			.with(administrator())
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"name\":\"Administrator\",\"permissionCodes\":[\"can_student_read\"]}"))
+			.content("{\"name\":\"Administrator\",\"permissionCodes\":[\"ADMIN_ACCESS\"]}"))
 			.andExpect(status().isBadRequest());
 
 		mockMvc.perform(get("/api/v1/role").with(administrator()))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[?(@.code == 'ADMIN')].permissions[*].code", hasItem("ADMIN_ACCESS")));
+			.andExpect(jsonPath("$[?(@.code == 'ADMIN')].permissions[*].code", hasItem("can_establishment_onboard")));
 	}
 
 	@Test

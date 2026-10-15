@@ -61,10 +61,22 @@ Ces flux ont des factures, des reçus, des comptes de suivi et des rapprochement
 
 Les permissions sont attribuées par rôle et limitées au périmètre de l’établissement concerné.
 
+## Configuration SMTP Yahoo
+
+Les invitations du personnel utilisent Yahoo SMTP (`smtp.mail.yahoo.com`, port `587`, STARTTLS). L’identifiant par défaut est `franckyaj@yahoo.com`. Le mot de passe n’est pas stocké dans le dépôt : fournir un mot de passe d’application Yahoo dans `SMTP_PASSWORD`.
+
+Avant de lancer l’application, définir le secret dans le shell :
+
+```sh
+export SMTP_PASSWORD='<mot-de-passe-application-yahoo>'
+```
+
+Les paramètres `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_AUTH`, `SMTP_STARTTLS` et `EMPLOYEE_INVITATION_FROM` peuvent être surchargés par l’environnement. Ne pas inscrire de mot de passe dans les fichiers versionnés.
+
 | Rôle | Principales responsabilités |
 |---|---|
-| Super administrateur plateforme | Gérer les établissements, offres, licences, paramètres de référence, fournisseurs et supervision |
-| Administrateur d’école | Configurer l’école, les années, classes, utilisateurs, modules et paramètres locaux |
+| Administrateur plateforme (`ADMIN`) | Consulter la liste des établissements, créer un établissement et inviter son premier administrateur d’école |
+| Administrateur d’école | Configurer l’école, gérer les rôles et permissions locaux, les années, classes, utilisateurs, modules et paramètres |
 | Direction | Consulter les tableaux de bord et rapports, superviser les opérations |
 | Secrétariat | Gérer les dossiers, inscriptions, classes et communications administratives |
 | Comptable / caissier | Gérer les frais scolaires, encaissements, reçus, échéanciers et impayés |
@@ -94,17 +106,17 @@ Un emploi du temps regroupe des créneaux récurrents associés à une classe, u
 - Un ou plusieurs parents/tuteurs par élève.
 - Un parent/tuteur peut être lié à plusieurs enfants.
 - Inscription à une année, un niveau et une classe.
-- Condition de paiement préalable à la finalisation configurable par établissement : aucune, paiement partiel ou paiement total des frais de l’année.
 - Historique des inscriptions et changements de classe.
 - Statut du dossier : préinscrit, actif, transféré, sorti ou archivé.
 - Import initial de données depuis un fichier tabulaire et export autorisé.
 
 ### 4.3 Frais scolaires et encaissements
 
+- Catalogue de types de frais configurable par établissement; chaque frais est associé à un type actif.
 - Définition des frais par année, niveau ou élève.
 - Échéances, remises et ajustements autorisés.
 - Enregistrement des paiements et paiements partiels.
-- Modes de paiement configurables par l’école parmi ceux proposés par la plateforme.
+- Modes de paiement configurables par l’école, avec libellés modifiables et désactivation logique sans effacer l’historique.
 - Reçu numéroté, historique des opérations et solde restant dû.
 - Liste des impayés et relances.
 - Exports de suivi comptable.
@@ -200,8 +212,8 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 
 1. Création d’un établissement et configuration de base.
 2. Gestion d’une année scolaire, des niveaux, classes et utilisateurs.
-3. Gestion des élèves, parents/tuteurs et inscriptions avec condition de paiement préalable configurable par établissement.
-4. Paramétrage de la devise, des frais scolaires et des modes de paiement.
+3. Gestion des élèves, parents/tuteurs et inscriptions, actives dès leur création indépendamment du paiement.
+4. Paramétrage de la devise, des types de frais, des frais scolaires et des modes de paiement.
 5. Enregistrement des paiements scolaires, reçus et soldes impayés.
 6. Appel des présences par classe.
 7. Espace parent web responsive ou mobile permettant de consulter les informations de ses enfants, présences, frais et annonces.
@@ -209,7 +221,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 9. Abonnements SaaS avec offre, quotas, état et paiement manuel suivi par l’opérateur.
 10. Tableau de bord simple et export des données principales.
 11. Gestion des rôles, isolation des données entre écoles, journal d’audit des actions sensibles.
-12. Paramètres de référence du super administrateur et configuration autorisée de l’école.
+12. Paramètres de référence et création d’un établissement avec invitation de son administrateur par `ADMIN`.
 13. Emplois du temps hebdomadaires par classe, avec modèles par niveau, vues quotidiennes/hebdomadaires et détection des conflits.
 
 ### Hors MVP / phases ultérieures
@@ -227,7 +239,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 - Une école ne peut consulter ni modifier les données d’une autre école, y compris en manipulant directement les identifiants d’une requête.
 - Un utilisateur sans permission ne peut pas exécuter l’action correspondante via l’API.
 - Le secrétariat peut inscrire un élève à une classe et associer ses tuteurs.
-- Selon la condition configurée par l’école, une inscription reste en attente jusqu’au premier paiement positif ou au règlement complet des frais de l’année; sans exigence, elle est active immédiatement.
+- L’inscription à une classe est effective immédiatement; le solde des frais reste suivi indépendamment.
 - Le comptable peut enregistrer un paiement partiel et le solde dû est recalculé correctement.
 - Un reçu peut être retrouvé et exporté sans modifier l’historique du paiement.
 - Un enseignant peut enregistrer l’appel d’une classe et le parent autorisé voit l’information.

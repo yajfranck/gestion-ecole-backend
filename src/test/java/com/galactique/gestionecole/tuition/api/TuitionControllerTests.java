@@ -75,6 +75,17 @@ class TuitionControllerTests {
 			.andExpect(jsonPath("$.chargesCreated").value(1))
 			.andReturn();
 		String feeId = JsonPath.read(feeResult.getResponse().getContentAsString(), "$.fee.id");
+		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
+			base + "/tuition-fee-types/" + feeTypeId)
+			.with(admin("can_tuition_fee_type_update"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"name\":\"Renamed Tuition Type\"}"))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.name").value("Renamed Tuition Type"));
+		mockMvc.perform(get(base + "/school-years/" + academicYearId + "/tuition-fees")
+			.with(admin("can_tuition_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[0].feeTypeName").value("Tuition"));
 
 		String chargesUrl = base + "/students/" + studentId + "/tuition-fees";
 		MvcResult charges = mockMvc.perform(get(chargesUrl).with(admin("can_tuition_read")))

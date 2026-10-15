@@ -5,8 +5,12 @@ info:
   description: |
     Contrat HTTP de l'application Gestion Ecole.
     Les endpoints Employee sont filtrés selon l'établissement du responsable.
-    Les endpoints de consultation des comptes, rôles et permissions exigent
-    ADMIN_ACCESS. La gestion des élèves exige can_student_*; les inscriptions exigent
+    Les routes globales de consultation des comptes, rôles et permissions exigent
+    ADMIN_ACCESS. La gestion des rôles d'école est limitée à l'établissement via
+    can_role_* et can_permission_read. ADMIN est réservé à la création d'un établissement et à l'invitation
+    de son premier administrateur. Aucun rôle n'a ADMIN_ACCESS par défaut après V21;
+    les routes globales de sécurité nécessitent un provisionnement distinct.
+    La gestion des élèves exige can_student_*; les inscriptions exigent
     can_enrollment_read ou can_enrollment_create; les employés et les
     postes utilisent leurs permissions dédiées. Les endpoints de gestion générale
     exigent ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT; les postes ont aussi
@@ -198,7 +202,7 @@ paths:
       tags:
         - Administration de la sécurité
       summary: Modifier le nom, la description et les permissions d'un rôle
-      description: Requiert ADMIN_ACCESS. Le code est immuable et ADMIN doit conserver ADMIN_ACCESS.
+      description: Requiert ADMIN_ACCESS. Le code est immuable et ADMIN ne peut pas recevoir ADMIN_ACCESS.
       operationId: updateRole
       security:
         - bearerAuth: []
@@ -257,7 +261,7 @@ paths:
       tags:
         - Établissements
       summary: Lister les établissements accessibles
-      description: Requiert ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT. L'administrateur global reçoit tous les établissements; le responsable ne reçoit que le sien.
+      description: Requiert ADMIN_ACCESS, can_establishment_read ou ESTABLISHMENT_STAFF_MANAGEMENT. ADMIN possède can_establishment_read et reçoit tous les établissements; cette lecture n'accorde pas les autres opérations globales.
       operationId: getEstablishments
       responses:
         '200':
@@ -271,40 +275,40 @@ paths:
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
-          description: Le compte ne possède pas ADMIN_ACCESS ou ESTABLISHMENT_STAFF_MANAGEMENT.
+          description: Le compte ne possède pas ADMIN_ACCESS, can_establishment_read ou ESTABLISHMENT_STAFF_MANAGEMENT.
     post:
       tags:
         - Établissements
-      summary: Créer un établissement
-      description: Réservé à la permission ADMIN_ACCESS.
-      operationId: createEstablishment
+      summary: Créer un établissement et inviter son administrateur
+      description: Réservé au rôle ADMIN avec can_establishment_onboard. La création, le poste d'administrateur et l'invitation sont transactionnels.
+      operationId: onboardEstablishment
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateEstablishmentRequest'
+              $ref: '#/components/schemas/OnboardEstablishmentRequest'
       responses:
         '201':
-          description: Établissement créé.
+          description: Établissement créé et invitation envoyée.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EstablishmentResponse'
+                $ref: '#/components/schemas/EstablishmentOnboardingResponse'
         '400':
           description: Corps invalide.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
-          description: Le compte ne possède pas ADMIN.
+          description: Rôle ADMIN ou permission can_establishment_onboard absent.
         '409':
-          description: Le code établissement existe déjà.
+          description: Code établissement, matricule ou adresse email déjà utilisé.
   /api/v1/establishments/{establishmentId}:
     delete:
       tags:
         - Établissements
       summary: Désactiver un établissement
-      description: Soft-delete; désactive également les membres et leurs comptes, puis révoque leurs refresh tokens. Requiert ADMIN_ACCESS.
+      description: Soft-delete; désactive également les membres et leurs comptes, puis révoque leurs refresh tokens. Requiert ADMIN_ACCESS, non attribué au rôle ADMIN d'onboarding.
       operationId: deactivateEstablishment
       parameters:
         - name: establishmentId
@@ -322,6 +326,139 @@ paths:
           description: Le compte ne possède pas ADMIN.
         '404':
           description: Établissement introuvable.
+
+  /api/v1/establishments/{establishmentId}/roles:
+    parameters:
+      - name: establishmentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Administration de la sécurité
+      summary: Lister les rôles accessibles dans un établissement
+      description: Requiert can_role_read. Retourne les rôles système consultables et les rôles locaux; seul un rôle local est modifiable.
+      operationId: getEstablishmentRoles
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Rôles système et locaux accessibles.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/EstablishmentRoleResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission absente ou établissement hors périmètre.
+    post:
+      tags:
+        - Administration de la sécurité
+      summary: Créer un rôle local
+      description: Requiert can_role_create. Les codes sont uniques dans toute la plateforme et les permissions plateforme sont refusées.
+      operationId: createEstablishmentRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRoleRequest'
+      responses:
+        '201':
+          description: Rôle local créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstablishmentRoleResponse'
+        '400':
+          description: Rôle ou permissions invalides, incluant une permission réservée à la plateforme.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission absente ou établissement hors périmètre.
+        '409':
+          description: Code déjà utilisé par un rôle de la plateforme.
+
+  /api/v1/establishments/{establishmentId}/roles/{code}:
+    parameters:
+      - name: establishmentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: code
+        in: path
+        required: true
+        schema:
+          type: string
+          maxLength: 64
+    put:
+      tags:
+        - Administration de la sécurité
+      summary: Modifier un rôle local
+      description: Requiert can_role_update. Les rôles système et ceux d'un autre établissement ne sont pas modifiables.
+      operationId: updateEstablishmentRole
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateRoleRequest'
+      responses:
+        '200':
+          description: Rôle local modifié.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstablishmentRoleResponse'
+        '400':
+          description: Permissions invalides ou réservées à la plateforme.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission absente ou établissement hors périmètre.
+        '404':
+          description: Rôle local introuvable.
+
+  /api/v1/establishments/{establishmentId}/permissions:
+    parameters:
+      - name: establishmentId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags:
+        - Administration de la sécurité
+      summary: Lister les permissions assignables dans un établissement
+      description: Requiert can_permission_read. Le catalogue est en lecture seule et omet les permissions plateforme.
+      operationId: getEstablishmentPermissions
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Catalogue des permissions assignables.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PermissionResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission absente ou établissement hors périmètre.
 
   /api/v1/establishments/{establishmentId}/grade-levels:
     get:
@@ -1317,72 +1454,6 @@ paths:
         '404':
           description: Période absente, déjà archivée ou hors périmètre.
 
-  /api/v1/establishments/{establishmentId}/enrollment-payment-condition:
-    get:
-      tags:
-        - Inscriptions
-      summary: Lire la condition de paiement des inscriptions
-      description: Requiert can_enrollment_payment_condition_read. Sans configuration enregistrée, le mode est NONE.
-      operationId: getEnrollmentPaymentCondition
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Condition de paiement de l'établissement.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnrollmentPaymentConditionResponse'
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_enrollment_payment_condition_read absente.
-        '404':
-          description: Établissement absent ou hors périmètre.
-    put:
-      tags:
-        - Inscriptions
-      summary: Configurer la condition de paiement des inscriptions
-      description: Requiert can_enrollment_payment_condition_update. Réévalue les inscriptions en attente.
-      operationId: setEnrollmentPaymentCondition
-      security:
-        - bearerAuth: []
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EnrollmentPaymentConditionRequest'
-      responses:
-        '200':
-          description: Condition mise à jour.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/EnrollmentPaymentConditionResponse'
-        '400':
-          description: Mode de paiement absent ou invalide.
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_enrollment_payment_condition_update absente.
-        '404':
-          description: Établissement absent ou hors périmètre.
-
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments:
     get:
       tags:
@@ -1422,7 +1493,7 @@ paths:
       tags:
         - Inscriptions
       summary: Inscrire un élève dans une classe
-      description: Une seule classe par élève et par année; le statut peut rester PENDING_PAYMENT selon la condition de l'établissement.
+      description: Une seule classe par élève et par année; l'inscription est effective immédiatement et ne dépend pas d'un paiement.
       operationId: createEnrollment
       parameters:
         - name: establishmentId
@@ -1460,6 +1531,48 @@ paths:
           description: Élève, classe, année ou établissement absent, archivé ou hors périmètre.
         '409':
           description: L'élève possède déjà une inscription pour cette année scolaire.
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/students:
+    get:
+      tags:
+        - Inscriptions
+      summary: Lister les élèves inscrits dans une classe
+      description: Requiert can_enrollment_read; retourne uniquement les élèves actifs de la classe pour l'année scolaire indiquée.
+      operationId: getClassStudents
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Élèves actifs inscrits dans la classe.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ClassStudentResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_enrollment_read absente.
+        '404':
+          description: Année ou classe absente ou hors périmètre.
 
   /api/v1/establishments/{establishmentId}/students:
     get:
@@ -1699,6 +1812,210 @@ paths:
           description: Permission can_payment_method_update absente.
         '404':
           description: Établissement absent ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/payment-methods/{code}:
+    patch:
+      tags:
+        - Frais et paiements
+      summary: Renommer un moyen de paiement
+      description: Requiert can_payment_method_update; les reçus historiques conservent leur libellé d'origine.
+      operationId: renamePaymentMethod
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenamePaymentMethodRequest'
+      responses:
+        '200':
+          description: Moyen de paiement renommé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TuitionPaymentMethodResponse'
+        '400':
+          description: Libellé invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_payment_method_update absente.
+        '404':
+          description: Moyen absent, désactivé ou hors périmètre.
+    delete:
+      tags:
+        - Frais et paiements
+      summary: Désactiver un moyen de paiement
+      description: Requiert can_payment_method_delete. Les paiements et reçus historiques sont conservés.
+      operationId: deletePaymentMethod
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: code
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Moyen de paiement désactivé.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_payment_method_delete absente.
+        '404':
+          description: Moyen absent, déjà désactivé ou hors périmètre.
+
+  /api/v1/establishments/{establishmentId}/tuition-fee-types:
+    get:
+      tags:
+        - Frais et paiements
+      summary: Lister les types de frais actifs
+      description: Requiert can_tuition_fee_type_read.
+      operationId: getTuitionFeeTypes
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Types de frais actifs.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TuitionFeeTypeResponse'
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_fee_type_read absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+    post:
+      tags:
+        - Frais et paiements
+      summary: Créer un type de frais
+      description: Requiert can_tuition_fee_type_create.
+      operationId: createTuitionFeeType
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTuitionFeeTypeRequest'
+      responses:
+        '201':
+          description: Type de frais créé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TuitionFeeTypeResponse'
+        '400':
+          description: Code ou libellé invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_fee_type_create absente.
+        '404':
+          description: Établissement absent ou hors périmètre.
+        '409':
+          description: Code déjà utilisé.
+
+  /api/v1/establishments/{establishmentId}/tuition-fee-types/{feeTypeId}:
+    patch:
+      tags:
+        - Frais et paiements
+      summary: Renommer un type de frais
+      description: Requiert can_tuition_fee_type_update; les libellés copiés dans les frais existants restent inchangés.
+      operationId: renameTuitionFeeType
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: feeTypeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameTuitionFeeTypeRequest'
+      responses:
+        '200':
+          description: Type renommé.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TuitionFeeTypeResponse'
+        '400':
+          description: Libellé invalide.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_fee_type_update absente.
+        '404':
+          description: Type absent, désactivé ou hors périmètre.
+    delete:
+      tags:
+        - Frais et paiements
+      summary: Désactiver un type de frais
+      description: Requiert can_tuition_fee_type_delete. Les définitions financières historiques sont conservées.
+      operationId: deleteTuitionFeeType
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: feeTypeId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Type désactivé.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission can_tuition_fee_type_delete absente.
+        '404':
+          description: Type absent, déjà désactivé ou hors périmètre.
 
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees:
     get:
@@ -2765,6 +3082,40 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PermissionResponse'
+    EstablishmentRoleResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - establishmentId
+        - code
+        - name
+        - enabled
+        - editable
+        - permissions
+      properties:
+        establishmentId:
+          type:
+            - string
+            - 'null'
+          format: uuid
+          description: Null pour un rôle système global.
+        code:
+          type: string
+        name:
+          type: string
+        description:
+          type:
+            - string
+            - 'null'
+        enabled:
+          type: boolean
+        editable:
+          type: boolean
+          description: Indique si le rôle appartient à l’établissement et peut être modifié.
+        permissions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PermissionResponse'
     PermissionResponse:
       type: object
       additionalProperties: false
@@ -2783,12 +3134,38 @@ components:
           type: string
           description: État de santé de l'application.
           example: UP
-    CreateEstablishmentRequest:
+    EstablishmentAdministratorRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - employeeNumber
+        - firstName
+        - lastName
+        - email
+      properties:
+        employeeNumber:
+          type: string
+          minLength: 1
+          maxLength: 40
+        firstName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        lastName:
+          type: string
+          minLength: 1
+          maxLength: 100
+        email:
+          type: string
+          format: email
+          maxLength: 254
+    OnboardEstablishmentRequest:
       type: object
       additionalProperties: false
       required:
         - code
         - name
+        - administrator
       properties:
         code:
           type: string
@@ -2798,6 +3175,29 @@ components:
           type: string
           minLength: 1
           maxLength: 200
+        administrator:
+          $ref: '#/components/schemas/EstablishmentAdministratorRequest'
+    EstablishmentOnboardingResponse:
+      type: object
+      required:
+        - establishment
+        - administratorInvitation
+      properties:
+        establishment:
+          $ref: '#/components/schemas/EstablishmentResponse'
+        administratorInvitation:
+          type: object
+          required:
+            - employeeId
+            - status
+          properties:
+            employeeId:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum:
+                - INVITATION_SENT
     EstablishmentResponse:
       type: object
       required:
@@ -2836,38 +3236,6 @@ components:
         schoolClassId:
           type: string
           format: uuid
-    EnrollmentPaymentConditionRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - mode
-      properties:
-        mode:
-          type: string
-          enum:
-            - NONE
-            - PARTIAL_PAYMENT
-            - FULL_PAYMENT
-    EnrollmentPaymentConditionResponse:
-      type: object
-      required:
-        - establishmentId
-        - mode
-      properties:
-        establishmentId:
-          type: string
-          format: uuid
-        mode:
-          type: string
-          enum:
-            - NONE
-            - PARTIAL_PAYMENT
-            - FULL_PAYMENT
-        updatedAt:
-          type:
-            - string
-            - 'null'
-          format: date-time
     EnrollmentResponse:
       type: object
       required:
@@ -2876,7 +3244,6 @@ components:
         - studentId
         - academicYearId
         - schoolClassId
-        - status
         - createdAt
       properties:
         id:
@@ -2894,11 +3261,6 @@ components:
         schoolClassId:
           type: string
           format: uuid
-        status:
-          type: string
-          enum:
-            - PENDING_PAYMENT
-            - ACTIVE
         createdAt:
           type: string
           format: date-time
@@ -2969,6 +3331,7 @@ components:
       additionalProperties: false
       required:
         - name
+        - feeTypeId
         - amount
         - currency
         - dueDate
@@ -2977,6 +3340,9 @@ components:
           type: string
           minLength: 1
           maxLength: 120
+        feeTypeId:
+          type: string
+          format: uuid
         amount:
           type: number
           exclusiveMinimum: 0
@@ -3007,6 +3373,9 @@ components:
         - amount
         - currency
         - dueDate
+        - feeTypeId
+        - feeTypeCode
+        - feeTypeName
         - scope
         - createdAt
       properties:
@@ -3028,6 +3397,13 @@ components:
         dueDate:
           type: string
           format: date
+        feeTypeId:
+          type: string
+          format: uuid
+        feeTypeCode:
+          type: string
+        feeTypeName:
+          type: string
         scope:
           type: string
           enum:
@@ -3047,6 +3423,87 @@ components:
         createdAt:
           type: string
           format: date-time
+    CreateTuitionFeeTypeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - name
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    RenameTuitionFeeTypeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    TuitionFeeTypeResponse:
+      type: object
+      required:
+        - id
+        - establishmentId
+        - code
+        - name
+        - enabled
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        code:
+          type: string
+        name:
+          type: string
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    RenamePaymentMethodRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+    ClassStudentResponse:
+      type: object
+      required:
+        - id
+        - studentNumber
+        - firstName
+        - lastName
+      properties:
+        id:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
     FeeCreationResponse:
       type: object
       required:

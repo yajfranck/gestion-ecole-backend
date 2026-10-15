@@ -90,7 +90,7 @@ Réponse `204 No Content`. Un mot de passe actuel incorrect renvoie `403 Forbidd
 
 ## Administration de la sécurité
 
-Les opérations de consultation et de gestion des rôles requièrent un JWT valide avec la permission `ADMIN_ACCESS`. Un utilisateur non authentifié reçoit `401 Unauthorized`; un utilisateur authentifié sans cette permission reçoit `403 Forbidden`. Les tableaux retournés sont triés par code ou nom d’utilisateur et peuvent être vides. Les hashes de mot de passe ne sont jamais inclus dans les réponses.
+Les routes `/api/v1/user`, `/api/v1/role` et `/api/v1/permission` restent globales et requièrent `ADMIN_ACCESS`. L’administrateur d’école gère les rôles de son établissement via `/api/v1/establishments/{establishmentId}/roles` et consulte les permissions assignables via `/permissions`. Les rôles système sont visibles mais non modifiables; les rôles personnalisés ne sont accessibles que dans leur établissement. Les permissions plateforme (`ADMIN_ACCESS`, `can_establishment_onboard`, `can_establishment_read`) ne sont pas assignables aux rôles locaux. Un utilisateur non authentifié reçoit `401 Unauthorized`; un utilisateur hors périmètre reçoit `403 Forbidden`.
 
 ### `GET /api/v1/user`
 
@@ -128,8 +128,8 @@ Retourne les rôles avec leurs permissions associées.
 		"enabled": true,
 		"permissions": [
 			{
-				"code": "ADMIN_ACCESS",
-				"description": "Administrative access"
+				"code": "can_establishment_onboard",
+				"description": "Create an establishment and invite its first administrator"
 			}
 		]
 	}
@@ -163,9 +163,46 @@ Remplace le nom, la description et la liste complète des permissions du rôle. 
 }
 ```
 
-Réponse `200 OK` avec le rôle mis à jour. Code inexistant : `404 Not Found`; permissions inconnues ou liste vide : `400 Bad Request`. Le rôle `ADMIN` doit conserver la permission `ADMIN_ACCESS`.
+Réponse `200 OK` avec le rôle mis à jour. Code inexistant : `404 Not Found`; permissions inconnues ou liste vide : `400 Bad Request`. Le rôle `ADMIN` ne peut pas recevoir `ADMIN_ACCESS` et reste limité à l’onboarding d’établissement.
 
 Les JWT d’accès déjà émis restent valides jusqu’à leur expiration (15 minutes par défaut); les changements de permissions s’appliquent aux jetons émis ensuite.
+
+### `GET /api/v1/establishments/{establishmentId}/roles`
+
+Requiert `can_role_read` et l’appartenance du demandeur à l’établissement. Retourne les rôles système consultables et les rôles personnalisés de cet établissement. Le champ `editable` vaut `false` pour un rôle système et `true` pour un rôle local.
+
+### `POST /api/v1/establishments/{establishmentId}/roles`
+
+Requiert `can_role_create`. Crée un rôle personnalisé pour l’établissement avec les permissions choisies dans le catalogue assignable.
+
+```json
+{
+	"code": "SCHOOL_LIBRARIAN",
+	"name": "Bibliothécaire",
+	"description": "Gestion des ressources",
+	"permissionCodes": ["can_student_read"]
+}
+```
+
+Réponse `201 Created`. Les codes restent uniques à l’échelle de la plateforme. Code déjà utilisé : `409 Conflict`; permissions inconnues, dupliquées ou réservées à la plateforme : `400 Bad Request`.
+
+### `PUT /api/v1/establishments/{establishmentId}/roles/{code}`
+
+Requiert `can_role_update`. Remplace le nom, la description et la liste complète des permissions d’un rôle personnalisé appartenant à l’établissement. Un rôle système ou un rôle d’une autre école n’est pas modifiable.
+
+```json
+{
+	"name": "Bibliothécaire principal",
+	"description": "Gestion et consultation des ressources",
+	"permissionCodes": ["can_student_read", "can_enrollment_read"]
+}
+```
+
+Réponse `200 OK`; rôle absent ou non local à l’établissement : `404 Not Found`; permission invalide ou plateforme réservée : `400 Bad Request`; demandeur hors périmètre : `403 Forbidden`.
+
+### `GET /api/v1/establishments/{establishmentId}/permissions`
+
+Requiert `can_permission_read` et l’appartenance du demandeur à l’établissement. Retourne le catalogue des permissions assignables. Les permissions `ADMIN_ACCESS`, `can_establishment_onboard` et `can_establishment_read` sont exclues. Le catalogue est en lecture seule pour les établissements.
 
 ### `GET /api/v1/permission`
 
@@ -186,24 +223,30 @@ Retourne le catalogue des permissions.
 
 ### `GET /api/v1/establishments`
 
-Nécessite `ADMIN_ACCESS` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. L’administrateur global voit tous les établissements; le responsable d’établissement ne voit que le sien.
+Nécessite `ADMIN_ACCESS`, `can_establishment_read` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. `ADMIN` possède `can_establishment_read` et voit tous les établissements; le responsable d’établissement ne voit que le sien. Cette lecture n’accorde ni la désactivation d’un établissement ni l’accès à l’administration de sécurité.
 
 ### `POST /api/v1/establishments`
 
-Crée un établissement. Réservé à la permission `ADMIN_ACCESS`.
+Crée un établissement et invite son premier administrateur d’école dans une même transaction. Réservé au rôle `ADMIN` et à `can_establishment_onboard`.
 
 ```json
 {
 	"code": "SCHOOL-001",
-	"name": "École Exemple"
+	"name": "École Exemple",
+	"administrator": {
+		"employeeNumber": "ADM-001",
+		"firstName": "Alex",
+		"lastName": "Exemple",
+		"email": "alex@example.org"
+	}
 }
 ```
 
-Réponse : `201 Created` avec l’établissement créé. Un code déjà utilisé renvoie `409 Conflict`.
+Réponse `201 Created` avec l’établissement et `administratorInvitation` (`employeeId`, `status: "INVITATION_SENT"`). Le premier administrateur reçoit une invitation pour définir son mot de passe. Un code d’établissement, matricule ou email déjà utilisé renvoie `409 Conflict`; un échec SMTP renvoie `503 Service Unavailable`.
 
 ### `DELETE /api/v1/establishments/{establishmentId}`
 
-Désactive logiquement un établissement. Toutes ses fiches de personnel et leurs comptes sont également désactivés, et leurs refresh tokens sont révoqués. Seule la permission `ADMIN_ACCESS` permet cette opération.
+Désactive logiquement un établissement. Toutes ses fiches de personnel et leurs comptes sont également désactivés, et leurs refresh tokens sont révoqués. Cette opération exige `ADMIN_ACCESS`; le rôle `ADMIN` d’onboarding ne la possède pas.
 
 Réponse `204 No Content`; un établissement absent renvoie `404 Not Found`.
 
@@ -311,25 +354,7 @@ La classe et la matière doivent appartenir au même établissement. Réaffecter
 
 ## Inscriptions
 
-Une inscription rattache un élève actif à une classe pour une année scolaire active. L’élève, l’année et la classe doivent appartenir au même établissement, et la classe doit être celle de l’année indiquée. Un élève ne peut avoir qu’une inscription par année (`409` en cas de doublon). L’inscription est conservée sans endpoint de modification ou suppression; les années suivantes créent de nouveaux enregistrements et préservent l’historique.
-
-Chaque établissement peut configurer une condition de paiement préalable à la finalisation : `NONE` active immédiatement l’inscription, `PARTIAL_PAYMENT` la garde en `PENDING_PAYMENT` jusqu’au premier paiement positif d’au moins une créance de l’année, et `FULL_PAYMENT` attend que toutes les créances de l’année soient soldées. Les frais déjà définis sont appliqués à la nouvelle inscription. L’ajout d’un paiement réévalue automatiquement une inscription en attente. Une inscription `ACTIVE` n’est jamais rétrogradée lorsqu’un frais est ajouté ou que la politique change. Sans configuration enregistrée, le mode par défaut est `NONE`.
-
-### `GET /api/v1/establishments/{establishmentId}/enrollment-payment-condition`
-
-Requiert `can_enrollment_payment_condition_read`. Retourne la condition de paiement de l’établissement; `updatedAt` vaut `null` lorsque le mode par défaut `NONE` est utilisé.
-
-### `PUT /api/v1/establishments/{establishmentId}/enrollment-payment-condition`
-
-Requiert `can_enrollment_payment_condition_update`. Définit la condition pour les inscriptions de l’établissement. Les inscriptions en attente sont réévaluées lors du changement.
-
-```json
-{
-	"mode": "PARTIAL_PAYMENT"
-}
-```
-
-Valeurs autorisées : `NONE`, `PARTIAL_PAYMENT`, `FULL_PAYMENT`. Réponse `200 OK` avec la configuration mise à jour; établissement absent ou hors périmètre : `404 Not Found`.
+Une inscription rattache immédiatement un élève actif à une classe pour une année scolaire active, indépendamment des paiements. L’élève, l’année et la classe doivent appartenir au même établissement, et la classe doit être celle de l’année indiquée. Un élève ne peut avoir qu’une inscription par année (`409` en cas de doublon). L’inscription est conservée sans endpoint de modification ou suppression; les années suivantes créent de nouveaux enregistrements et préservent l’historique. Les frais sont suivis séparément.
 
 ### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments`
 
@@ -346,13 +371,39 @@ Requiert `can_enrollment_create`.
 }
 ```
 
-Réponse `201 Created` avec `id`, `establishmentId`, `studentId`, `academicYearId`, `schoolClassId`, `status` (`ACTIVE` ou `PENDING_PAYMENT`) et `createdAt`. Un élève, une année ou une classe absent, archivé ou hors périmètre renvoie `404`; une inscription déjà existante pour le même élève et la même année renvoie `409 Conflict`.
+Réponse `201 Created` avec `id`, `establishmentId`, `studentId`, `academicYearId`, `schoolClassId` et `createdAt`. L’inscription est effective immédiatement, sans paiement préalable. Un élève, une année ou une classe absent, archivé ou hors périmètre renvoie `404`; une inscription déjà existante pour le même élève et la même année renvoie `409 Conflict`.
+
+### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/students`
+
+Requiert `can_enrollment_read`. Retourne les élèves actifs inscrits dans cette classe pour l’année indiquée, triés par nom, prénom et numéro. Une classe absente ou hors périmètre renvoie `404`.
 
 ## Frais et paiements scolaires
 
-Les frais sont définis dans le périmètre d’une année scolaire, avec une portée facultative par niveau ou par élève. Un frais sans `gradeLevelId` ni `studentId` s’applique à toute l’année. Sa création crée immédiatement une créance pour chaque élève actuellement inscrit qui correspond à la portée. Une créance conserve une copie du montant, de la devise, de l’échéance et des informations de l’élève; le frais d’origine n’est pas modifiable par l’API. Après de nouvelles inscriptions, `POST .../apply` applique de nouveau le frais sans créer de doublons.
+Les types de frais sont configurés par établissement et désactivables sans supprimer les frais historiques. Chaque nouvelle définition de frais doit référencer un type actif (`feeTypeId`); le code et le nom du type sont copiés dans la définition pour préserver l’historique. Les frais sont définis dans le périmètre d’une année scolaire, avec une portée facultative par niveau ou par élève. Un frais sans `gradeLevelId` ni `studentId` s’applique à toute l’année. Sa création crée immédiatement une créance pour chaque élève actuellement inscrit qui correspond à la portée. Une créance conserve une copie du montant, de la devise, de l’échéance et des informations de l’élève; le frais d’origine n’est pas modifiable par l’API. Après de nouvelles inscriptions, `POST .../apply` applique de nouveau le frais sans créer de doublons.
 
-Les montants sont positifs, au plus deux décimales, et la devise est un code de trois lettres. Les paiements sont enregistrés manuellement, immuables et associés à une seule créance. Le solde est recalculé depuis l’historique; un paiement supérieur au solde est refusé. Les permissions financières sont attribuées aux rôles `ADMIN` et `ESTABLISHMENT_ADMIN`.
+Les montants sont positifs, au plus deux décimales, et la devise est un code de trois lettres. Les paiements sont enregistrés manuellement, immuables et associés à une seule créance. Le solde est recalculé depuis l’historique; un paiement supérieur au solde est refusé. Les permissions financières sont attribuées au rôle `ESTABLISHMENT_ADMIN`.
+
+### `GET /api/v1/establishments/{establishmentId}/tuition-fee-types`
+
+Requiert `can_tuition_fee_type_read`. Retourne les types actifs du catalogue de l’établissement.
+
+### `POST /api/v1/establishments/{establishmentId}/tuition-fee-types`
+
+Requiert `can_tuition_fee_type_create`. Crée un type avec code unique et libellé.
+
+```json
+{"code":"TUITION","name":"Frais de scolarité"}
+```
+
+Réponse `201 Created`; code déjà utilisé : `409 Conflict`.
+
+### `PATCH /api/v1/establishments/{establishmentId}/tuition-fee-types/{feeTypeId}`
+
+Requiert `can_tuition_fee_type_update`. Renomme un type actif avec `{"name":"Scolarité annuelle"}`. Le libellé déjà copié dans les frais existants reste inchangé.
+
+### `DELETE /api/v1/establishments/{establishmentId}/tuition-fee-types/{feeTypeId}`
+
+Requiert `can_tuition_fee_type_delete`. Désactive le type sans effacer les définitions de frais et créances historiques. Réponse `204 No Content`.
 
 ### `GET /api/v1/establishments/{establishmentId}/payment-methods`
 
@@ -371,7 +422,15 @@ Requiert `can_payment_method_update`. Remplace la liste des méthodes acceptées
 }
 ```
 
-Réponse `200 OK` avec les méthodes enregistrées. Une méthode non configurée ne peut pas être utilisée pour encaisser un paiement.
+Réponse `200 OK` avec les méthodes actives enregistrées. Une méthode non configurée ou désactivée ne peut pas être utilisée pour encaisser un paiement.
+
+### `PATCH /api/v1/establishments/{establishmentId}/payment-methods/{code}`
+
+Requiert `can_payment_method_update`. Modifie le libellé d’un moyen actif avec `{"name":"Paiement espèces"}`. Les reçus déjà émis conservent le libellé historique.
+
+### `DELETE /api/v1/establishments/{establishmentId}/payment-methods/{code}`
+
+Requiert `can_payment_method_delete`. Désactive logiquement un moyen de paiement, sans modifier les paiements et reçus existants. Réponse `204 No Content`; un code inconnu ou déjà désactivé renvoie `404`.
 
 ### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees`
 
@@ -384,6 +443,7 @@ Requiert `can_tuition_create`. Crée un frais et ses créances pour les élèves
 ```json
 {
 	"name": "Frais de scolarité - période 1",
+	"feeTypeId": "<uuid-type-frais>",
 	"amount": 125000,
 	"currency": "XOF",
 	"dueDate": "2026-10-31",
@@ -391,7 +451,7 @@ Requiert `can_tuition_create`. Crée un frais et ses créances pour les élèves
 }
 ```
 
-Réponse `201 Created` avec `fee` et `chargesCreated`. L’échéance doit être comprise dans l’année scolaire. Niveau, élève ou année absents/hors périmètre : `404`; nom déjà utilisé dans l’année : `409`; montant ou portée invalide : `400`.
+Réponse `201 Created` avec `fee` (incluant `feeTypeId`, `feeTypeCode` et `feeTypeName`) et `chargesCreated`. L’échéance doit être comprise dans l’année scolaire. Type, niveau, élève ou année absents/hors périmètre : `404`; nom déjà utilisé dans l’année : `409`; montant ou portée invalide : `400`.
 
 ### `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/{feeId}/apply`
 

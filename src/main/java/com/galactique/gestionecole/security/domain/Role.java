@@ -3,10 +3,16 @@ package com.galactique.gestionecole.security.domain;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Pattern;
 
-public record Role(String code, String name, String description, boolean enabled, Set<Permission> permissions) {
+public record Role(String code, String name, String description, boolean enabled, Set<Permission> permissions,
+	UUID establishmentId) {
 	private static final Pattern CODE_PATTERN = Pattern.compile("[A-Z][A-Z0-9_]*");
+
+	public Role(String code, String name, String description, boolean enabled, Set<Permission> permissions) {
+		this(code, name, description, enabled, permissions, null);
+	}
 
 	public Role {
 		Objects.requireNonNull(code, "code must not be null");

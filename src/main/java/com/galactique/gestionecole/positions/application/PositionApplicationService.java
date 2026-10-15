@@ -60,7 +60,7 @@ public class PositionApplicationService {
 		if (establishmentRepository.findById(establishmentId).filter(establishment -> establishment.enabled()).isEmpty()) {
 			throw new EmployeeNotFoundException();
 		}
-		Set<String> roleCodes = validateRoleCodes(requestedRoleCodes);
+		Set<String> roleCodes = validateRoleCodes(establishmentId, requestedRoleCodes);
 		String normalizedName = name.strip();
 		if (positionRepository.existsByEstablishmentIdAndName(establishmentId, normalizedName)) {
 			throw new EmployeeConflictException();
@@ -95,7 +95,7 @@ public class PositionApplicationService {
 		EmployeeActor actor) {
 		requireScope(establishmentId, actor);
 		Position current = findEnabledPosition(positionId, establishmentId);
-		Set<String> roleCodes = validateRoleCodes(requestedRoleCodes);
+		Set<String> roleCodes = validateRoleCodes(establishmentId, requestedRoleCodes);
 		Position updated = positionRepository.updateRoles(current.id(), establishmentId, roleCodes);
 		for (Employee employee : employeeRepository.findAllByPositionId(updated.id())) {
 			if (employee.userAccountId() != null && employee.enabled()) {
@@ -134,16 +134,17 @@ public class PositionApplicationService {
 			.orElseThrow(EmployeeAccessDeniedException::new);
 	}
 
-	private Set<String> validateRoleCodes(Set<String> requestedRoleCodes) {
+	private Set<String> validateRoleCodes(UUID establishmentId, Set<String> requestedRoleCodes) {
 		Set<String> roleCodes = requestedRoleCodes.stream()
 			.map(roleCode -> roleCode.strip().toUpperCase(java.util.Locale.ROOT))
 			.collect(java.util.stream.Collectors.toUnmodifiableSet());
-		Set<String> availableRoleCodes = securityDirectoryRepository.findAllRoles().stream()
+		List<Role> establishmentRoles = securityDirectoryRepository.findRolesForEstablishment(establishmentId);
+		Set<String> availableRoleCodes = establishmentRoles.stream()
 			.filter(Role::enabled)
 			.map(Role::code)
 			.filter(roleCode -> !RESERVED_ROLE_CODES.contains(roleCode))
 			.collect(java.util.stream.Collectors.toSet());
-		Set<String> globalAdministratorRoleCodes = securityDirectoryRepository.findAllRoles().stream()
+		Set<String> globalAdministratorRoleCodes = establishmentRoles.stream()
 			.filter(role -> role.permissions().stream()
 				.anyMatch(permission -> "ADMIN_ACCESS".equals(permission.code())))
 			.map(Role::code)
