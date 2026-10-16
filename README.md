@@ -312,6 +312,25 @@ Au 14 octobre 2026, Spring Boot 4.1.1 est stable ; Java 21 est compatible et Mav
 
 ### 7.4 Organisation du backend
 
+#### Donnees de test locales
+
+Le profil `local` applique aussi `db/migration-local/V32__seed_local_vogt_school.sql` :
+etablissement actif `VOGT` / `COLLEGE VOGT`, administrateur `FRANCK YAJE`
+(`franckyaj@gmail.com`), type de frais `SCOLARITE`, annee `2026-2027`
+(du 1er septembre 2026 au 31 aout 2027), classe `SIXIEME`, matiere `MATH`
+affectee a la classe et eleve `Miya WANDJA` inscrit dans cette classe.
+Le compte est deja active; aucune invitation ni aucun envoi SMTP n'est necessaire.
+Le mot de passe de test fourni est stocke exclusivement sous forme de hash BCrypt.
+Ces identifiants publics de developpement ne doivent jamais etre utilises en production.
+
+La licence locale tous modules commence deux minutes apres son insertion et dure
+trois heures : les acces metier sont donc refuses avant T+2 min et apres T+182 min.
+La migration n'est appliquee qu'une fois par base. La base H2 en memoire etant
+recreee a chaque redemarrage du processus, le jeu et les horaires sont reinitialises.
+Demarrage : `./mvnw -Plocal spring-boot:run -Dspring-boot.run.profiles=local`.
+
+#### Structure des modules
+
 Organisation proposée par domaines fonctionnels, à ajuster à mesure que le code évolue :
 
     com.monentreprise.gestionecoles

@@ -10,6 +10,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +41,7 @@ import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class AttendanceApplicationService {
+	private static final Logger logger = LoggerFactory.getLogger(AttendanceApplicationService.class);
 	private static final long MAX_HISTORY_DAYS = 366;
 
 	private final AttendanceRepository attendanceRepository;
@@ -246,6 +249,9 @@ public class AttendanceApplicationService {
 			if ((current == null && command.expectedUpdatedAt() != null)
 				|| (current != null && hasChanges(current, command)
 					&& !current.updatedAt().equals(command.expectedUpdatedAt()))) {
+				logger.warn("Attendance version conflict: enrollmentId={}, expectedUpdatedAt={}, actualUpdatedAt={}, reason={}",
+					enrollment.id(), command.expectedUpdatedAt(), current == null ? null : current.updatedAt(),
+					current == null ? "record_missing" : command.expectedUpdatedAt() == null ? "version_missing" : "version_stale");
 				throw new AttendanceConflictException();
 			}
 		}
@@ -267,7 +273,7 @@ public class AttendanceApplicationService {
 				}
 			}
 		} catch (DataIntegrityViolationException exception) {
-			throw new AttendanceConflictException();
+			throw new AttendanceConflictException(exception);
 		}
 	}
 

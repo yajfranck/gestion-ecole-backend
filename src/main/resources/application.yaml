@@ -11,7 +11,7 @@ spring:
     host: ${SMTP_HOST:smtp.mail.yahoo.com}
     port: ${SMTP_PORT:587}
     username: ${SMTP_USERNAME:franckyaj@yahoo.com}
-    password: ${SMTP_PASSWORD}
+    password: ${SMTP_PASSWORDdewwskaerwneslqk}
     properties:
       mail:
         smtp:
