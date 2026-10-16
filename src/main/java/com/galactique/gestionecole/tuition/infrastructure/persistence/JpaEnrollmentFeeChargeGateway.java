@@ -35,7 +35,7 @@ public class JpaEnrollmentFeeChargeGateway implements EnrollmentFeeChargeGateway
 		for (TuitionFee fee : tuitionRepository.findFees(enrollment.establishmentId(), enrollment.academicYearId())) {
 			if (fee.enabled()
 				&& (fee.studentId() == null || fee.studentId().equals(enrollment.studentId()))
-				&& (fee.gradeLevelId() == null || fee.gradeLevelId().equals(schoolClass.gradeLevelId()))
+				&& (fee.schoolClassId() == null || fee.schoolClassId().equals(schoolClass.id()))
 				&& !tuitionRepository.existsCharge(fee.id(), enrollment.studentId())) {
 				tuitionRepository.saveCharge(fee, student);
 			}

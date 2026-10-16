@@ -16,20 +16,25 @@ import com.galactique.gestionecole.schoolclasses.domain.AcademicPeriod;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicPeriodRepository;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class SchoolCalendarApplicationService {
 	private final AcademicYearRepository academicYearRepository;
 	private final AcademicPeriodRepository academicPeriodRepository;
 	private final EmployeeApplicationService employeeApplicationService;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public SchoolCalendarApplicationService(
 		AcademicYearRepository academicYearRepository,
 		AcademicPeriodRepository academicPeriodRepository,
-		EmployeeApplicationService employeeApplicationService) {
+		EmployeeApplicationService employeeApplicationService,
+		LicenseApplicationService licenseApplicationService) {
 		this.academicYearRepository = academicYearRepository;
 		this.academicPeriodRepository = academicPeriodRepository;
 		this.employeeApplicationService = employeeApplicationService;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional(readOnly = true)
@@ -57,6 +62,19 @@ public class SchoolCalendarApplicationService {
 	public AcademicYear findYear(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
 		requireAccessibleEstablishment(establishmentId, actor);
 		return findEnabledYear(academicYearId, establishmentId);
+	}
+
+	@Transactional(readOnly = true)
+	public AcademicYear findYearForAttendanceHistory(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
+		requireAccessibleEstablishment(establishmentId, actor);
+		return academicYearRepository.findByIdAndEstablishmentId(academicYearId, establishmentId)
+			.orElseThrow(AcademicCalendarNotFoundException::new);
+	}
+
+	@Transactional(readOnly = true)
+	public AcademicYear findYearForGuardian(UUID establishmentId, UUID academicYearId) {
+		return academicYearRepository.findByIdAndEstablishmentId(academicYearId, establishmentId)
+			.orElseThrow(AcademicCalendarNotFoundException::new);
 	}
 
 	@Transactional
@@ -173,6 +191,10 @@ public class SchoolCalendarApplicationService {
 	}
 
 	private Establishment requireAccessibleEstablishment(UUID establishmentId, EmployeeActor actor) {
+		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.SCHOOL_MANAGEMENT,
+			java.time.Instant.now())) {
+			throw new AcademicCalendarAccessDeniedException();
+		}
 		List<Establishment> establishments;
 		try {
 			establishments = employeeApplicationService.findEstablishments(actor);

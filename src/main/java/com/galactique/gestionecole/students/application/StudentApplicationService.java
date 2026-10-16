@@ -13,17 +13,22 @@ import com.galactique.gestionecole.employees.application.EmployeeApplicationServ
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.students.domain.StudentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class StudentApplicationService {
 	private final StudentRepository studentRepository;
 	private final EmployeeApplicationService employeeApplicationService;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public StudentApplicationService(
 		StudentRepository studentRepository,
-		EmployeeApplicationService employeeApplicationService) {
+		EmployeeApplicationService employeeApplicationService,
+		LicenseApplicationService licenseApplicationService) {
 		this.studentRepository = studentRepository;
 		this.employeeApplicationService = employeeApplicationService;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional
@@ -45,6 +50,19 @@ public class StudentApplicationService {
 	@Transactional(readOnly = true)
 	public Student findById(UUID establishmentId, UUID studentId, EmployeeActor actor) {
 		return findActiveStudent(establishmentId, studentId, actor);
+	}
+
+	@Transactional(readOnly = true)
+	public List<Student> findActiveByIds(UUID establishmentId, List<UUID> studentIds, EmployeeActor actor) {
+		requireAccessibleEstablishment(establishmentId, actor);
+		return studentRepository.findActiveByEstablishmentIdAndIds(establishmentId, studentIds);
+	}
+
+	@Transactional(readOnly = true)
+	public Student findIncludingArchived(UUID establishmentId, UUID studentId, EmployeeActor actor) {
+		requireAccessibleEstablishment(establishmentId, actor);
+		return studentRepository.findIncludingArchivedByIdAndEstablishmentId(studentId, establishmentId)
+			.orElseThrow(StudentNotFoundException::new);
 	}
 
 	private Student findActiveStudent(UUID establishmentId, UUID studentId, EmployeeActor actor) {
@@ -69,6 +87,10 @@ public class StudentApplicationService {
 	}
 
 	private Establishment requireAccessibleEstablishment(UUID establishmentId, EmployeeActor actor) {
+		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
+			java.time.Instant.now())) {
+			throw new StudentAccessDeniedException();
+		}
 		List<Establishment> accessibleEstablishments;
 		try {
 			accessibleEstablishments = employeeApplicationService.findEstablishments(actor);

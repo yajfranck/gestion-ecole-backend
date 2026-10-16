@@ -81,4 +81,9 @@ public class EstablishmentEntity {
 	public void disable() {
 		this.enabled = false;
 	}
+
+	public void update(String code, String name) {
+		this.code = code;
+		this.name = name;
+	}
 }

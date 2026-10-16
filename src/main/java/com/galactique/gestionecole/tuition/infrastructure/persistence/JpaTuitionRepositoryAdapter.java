@@ -80,9 +80,25 @@ public class JpaTuitionRepositoryAdapter implements TuitionRepository {
 
 	@Override
 	@Transactional(readOnly = true)
+	public List<StudentFeeCharge> findChargesForStudentAndYear(
+		UUID establishmentId, UUID studentId, UUID academicYearId) {
+		return chargeRepository.findAllByEstablishmentIdAndStudentIdAndAcademicYearIdOrderByDueDateAsc(
+			establishmentId, studentId, academicYearId).stream().map(StudentFeeChargeEntity::toDomain).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
 	public List<StudentFeeCharge> findChargesForYear(UUID establishmentId, UUID academicYearId) {
 		return chargeRepository.findAllByEstablishmentIdAndAcademicYearIdOrderByDueDateAsc(establishmentId, academicYearId)
 			.stream().map(entity -> entity.toDomain()).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<StudentFeeCharge> findCharge(UUID chargeId, UUID establishmentId,
+		UUID studentId, UUID academicYearId) {
+		return chargeRepository.findByIdAndEstablishmentIdAndStudentIdAndAcademicYearId(
+			chargeId, establishmentId, studentId, academicYearId).map(StudentFeeChargeEntity::toDomain);
 	}
 
 	@Override
@@ -104,6 +120,24 @@ public class JpaTuitionRepositoryAdapter implements TuitionRepository {
 	public List<TuitionPayment> findPayments(UUID chargeId) {
 		return paymentRepository.findAllByChargeIdOrderByReceivedAtAsc(chargeId)
 			.stream().map(entity -> entity.toDomain()).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<TuitionPayment> findPaymentsForCharges(List<UUID> chargeIds) {
+		if (chargeIds.isEmpty()) {
+			return List.of();
+		}
+		return paymentRepository.findAllByChargeIdInOrderByReceivedAtAsc(chargeIds)
+			.stream().map(TuitionPaymentEntity::toDomain).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<TuitionPayment> findPaymentsForChargeBetween(UUID chargeId, UUID establishmentId,
+		UUID studentId, java.time.Instant from, java.time.Instant to) {
+		return paymentRepository.findAllByChargeIdAndEstablishmentIdAndStudentIdAndReceivedAtBetweenOrderByReceivedAtAsc(
+			chargeId, establishmentId, studentId, from, to).stream().map(TuitionPaymentEntity::toDomain).toList();
 	}
 
 	@Override

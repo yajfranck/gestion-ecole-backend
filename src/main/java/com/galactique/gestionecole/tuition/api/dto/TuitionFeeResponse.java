@@ -9,17 +9,17 @@ import com.galactique.gestionecole.tuition.domain.TuitionFee;
 
 public record TuitionFeeResponse(UUID id, UUID establishmentId, UUID academicYearId, String name,
 	BigDecimal amount, String currency, LocalDate dueDate, String scope, UUID feeTypeId,
-	String feeTypeCode, String feeTypeName, UUID gradeLevelId,
+	String feeTypeCode, String feeTypeName, UUID schoolClassId,
 	UUID studentId, Instant createdAt) {
 	public static TuitionFeeResponse from(TuitionFee fee) {
 		String scope = "ACADEMIC_YEAR";
 		if (fee.studentId() != null) {
 			scope = "STUDENT";
-		} else if (fee.gradeLevelId() != null) {
-			scope = "GRADE_LEVEL";
+		} else if (fee.schoolClassId() != null) {
+			scope = "SCHOOL_CLASS";
 		}
 		return new TuitionFeeResponse(fee.id(), fee.establishmentId(), fee.academicYearId(), fee.name(),
 			fee.amount(), fee.currency(), fee.dueDate(), scope, fee.feeTypeId(), fee.feeTypeCode(), fee.feeTypeName(),
-			fee.gradeLevelId(), fee.studentId(), fee.createdAt());
+			fee.schoolClassId(), fee.studentId(), fee.createdAt());
 	}
 }

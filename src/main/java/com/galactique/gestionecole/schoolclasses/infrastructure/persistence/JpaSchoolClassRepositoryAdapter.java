@@ -20,8 +20,8 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 
 	@Override
 	@Transactional
-	public SchoolClass save(UUID establishmentId, UUID academicYearId, UUID gradeLevelId, String code, String name) {
-		return jpaRepository.save(new SchoolClassEntity(establishmentId, academicYearId, gradeLevelId, code, name))
+	public SchoolClass save(UUID establishmentId, UUID academicYearId, String code, String name) {
+		return jpaRepository.save(new SchoolClassEntity(establishmentId, academicYearId, code, name))
 			.toDomain();
 	}
 
@@ -35,13 +35,6 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 	@Transactional(readOnly = true)
 	public boolean existsByAcademicYearIdAndCodeAndIdNot(UUID academicYearId, String code, UUID schoolClassId) {
 		return jpaRepository.existsByAcademicYearIdAndCodeIgnoreCaseAndIdNot(academicYearId, code, schoolClassId);
-	}
-
-	@Override
-	@Transactional(readOnly = true)
-	public boolean existsByAcademicYearIdAndGradeLevelIdAndName(
-		UUID academicYearId, UUID gradeLevelId, String name) {
-		return jpaRepository.existsByAcademicYearIdAndGradeLevelIdAndNameIgnoreCase(academicYearId, gradeLevelId, name);
 	}
 
 	@Override
@@ -67,12 +60,19 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 	}
 
 	@Override
+	@Transactional(readOnly = true)
+	public Optional<SchoolClass> findIncludingArchivedByIdAndEstablishmentIdAndAcademicYearId(
+		UUID schoolClassId, UUID establishmentId, UUID academicYearId) {
+		return jpaRepository.findByIdAndEstablishmentIdAndAcademicYearId(
+			schoolClassId, establishmentId, academicYearId).map(SchoolClassEntity::toDomain);
+	}
+
+	@Override
 	@Transactional
-	public SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId,
-		UUID gradeLevelId, String code, String name) {
+	public SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId, String code, String name) {
 		SchoolClassEntity entity = jpaRepository.findByIdAndEstablishmentIdAndAcademicYearIdAndEnabledTrue(
 			schoolClassId, establishmentId, academicYearId).orElseThrow();
-		entity.update(gradeLevelId, code, name);
+		entity.update(code, name);
 		return entity.toDomain();
 	}
 

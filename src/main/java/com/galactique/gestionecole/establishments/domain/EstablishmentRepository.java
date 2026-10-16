@@ -7,7 +7,11 @@ import java.util.UUID;
 public interface EstablishmentRepository {
 	Establishment save(String code, String name);
 
+	Establishment update(UUID establishmentId, String code, String name);
+
 	Optional<Establishment> findById(UUID id);
+
+	Optional<Establishment> findByIdForUpdate(UUID id);
 
 	List<Establishment> findAll();
 

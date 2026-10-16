@@ -47,6 +47,15 @@ public class JpaGuardianRepositoryAdapter implements GuardianRepository {
 	}
 
 	@Override
+	@Transactional(readOnly = true)
+	public Optional<Student> findLinkedChild(UUID guardianId, UUID studentId) {
+		return linkJpaRepository.findLinkedActiveChild(guardianId, studentId).map(student ->
+			new Student(student.getId(), student.getEstablishmentId(), student.getStudentNumber(),
+				student.getFirstName(), student.getLastName(), student.isEnabled(),
+				student.getCreatedAt(), student.getUpdatedAt()));
+	}
+
+	@Override
 	@Transactional
 	public void link(UUID guardianId, UUID studentId) {
 		linkJpaRepository.save(new GuardianStudentLinkEntity(guardianId, studentId));

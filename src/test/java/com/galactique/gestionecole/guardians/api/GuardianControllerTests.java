@@ -31,6 +31,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 import com.jayway.jsonpath.JsonPath;
 
@@ -44,23 +46,26 @@ class GuardianControllerTests {
 	private final EstablishmentRepository establishmentRepository;
 	private final UserAccountRepository userAccountRepository;
 	private final PasswordEncoder passwordEncoder;
+	private final LicenseApplicationService licenseApplicationService;
 
 	@MockitoBean
 	private JavaMailSender mailSender;
 
 	@Autowired
 	GuardianControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
-		UserAccountRepository userAccountRepository, PasswordEncoder passwordEncoder) {
+		UserAccountRepository userAccountRepository, PasswordEncoder passwordEncoder,
+		LicenseApplicationService licenseApplicationService) {
 		this.mockMvc = mockMvc;
 		this.establishmentRepository = establishmentRepository;
 		this.userAccountRepository = userAccountRepository;
 		this.passwordEncoder = passwordEncoder;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Test
 	void invitedGuardianCanOnlySeeLinkedChildrenAcrossTheFamily() throws Exception {
-		Establishment establishment = establishmentRepository.save(
-			"FAM-" + UUID.randomUUID().toString().substring(0, 8), "Family Test School");
+		Establishment establishment = LicensedEstablishmentFixture.create(establishmentRepository,
+			licenseApplicationService, "FAM-" + UUID.randomUUID().toString().substring(0, 8), "Family Test School");
 		String firstStudentId = createStudent(establishment, "Family A");
 		String secondStudentId = createStudent(establishment, "Family B");
 		createStudent(establishment, "Family C");

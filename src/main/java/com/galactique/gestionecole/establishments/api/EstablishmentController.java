@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -20,6 +21,7 @@ import com.galactique.gestionecole.establishments.application.EstablishmentAppli
 import com.galactique.gestionecole.establishments.application.EstablishmentOnboardingApplicationService;
 import com.galactique.gestionecole.establishments.api.dto.EstablishmentOnboardingResponse;
 import com.galactique.gestionecole.establishments.api.dto.OnboardEstablishmentRequest;
+import com.galactique.gestionecole.establishments.api.dto.UpdateEstablishmentRequest;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 
@@ -57,6 +59,15 @@ public class EstablishmentController {
 		Authentication authentication) {
 		return EstablishmentOnboardingResponse.from(
 			establishmentOnboardingApplicationService.onboard(request, authentication.getName()));
+	}
+
+	/** Modifie le code et/ou le nom d’un établissement actif. */
+	@PatchMapping("/{establishmentId}")
+	@PreAuthorize("hasRole('ADMIN') or hasAuthority('can_establishment_update')")
+	public EstablishmentResponse updateEstablishment(@PathVariable UUID establishmentId,
+		@RequestBody UpdateEstablishmentRequest request, Authentication authentication) {
+		return EstablishmentResponse.from(establishmentApplicationService.update(establishmentId,
+			request.toCommand(), authentication.getName(), hasAuthority(authentication, "ROLE_ADMIN")));
 	}
 
 	/** Désactive un établissement ainsi que les accès de ses membres. */

@@ -52,24 +52,24 @@ public class SchoolClassController {
 			establishmentId, academicYearId, schoolClassId, toActor(authentication)));
 	}
 
-	/** Crée une classe pour un niveau dans l’année scolaire. */
+	/** Crée une classe dans l’année scolaire. */
 	@PostMapping
 	@PreAuthorize("hasAuthority('can_school_class_create')")
 	@ResponseStatus(HttpStatus.CREATED)
 	public SchoolClassResponse createClass(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@Valid @RequestBody CreateSchoolClassRequest request, Authentication authentication) {
 		return SchoolClassResponse.from(schoolCatalogApplicationService.createClass(establishmentId, academicYearId,
-			new CreateSchoolClassCommand(request.gradeLevelId(), request.code(), request.name()), toActor(authentication)));
+			new CreateSchoolClassCommand(request.code(), request.name()), toActor(authentication)));
 	}
 
-	/** Modifie le niveau, le code ou le nom d’une classe. */
+	/** Modifie le code ou le nom d’une classe. */
 	@PatchMapping("/{schoolClassId}")
 	@PreAuthorize("hasAuthority('can_school_class_update')")
 	public SchoolClassResponse updateClass(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@PathVariable UUID schoolClassId, @Valid @RequestBody UpdateSchoolClassRequest request,
 		Authentication authentication) {
 		return SchoolClassResponse.from(schoolCatalogApplicationService.updateClass(establishmentId, academicYearId,
-			schoolClassId, new UpdateSchoolClassCommand(request.gradeLevelId(), request.code(), request.name()),
+			schoolClassId, new UpdateSchoolClassCommand(request.code(), request.name()),
 			toActor(authentication)));
 	}
 

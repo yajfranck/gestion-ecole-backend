@@ -12,7 +12,13 @@ public interface EnrollmentJpaRepository extends JpaRepository<EnrollmentEntity,
 	List<EnrollmentEntity> findAllByEstablishmentIdAndAcademicYearIdOrderByCreatedAtAsc(
 		UUID establishmentId, UUID academicYearId);
 
+	List<EnrollmentEntity> findAllByEstablishmentIdAndAcademicYearIdAndSchoolClassIdOrderByCreatedAtAsc(
+		UUID establishmentId, UUID academicYearId, UUID schoolClassId);
+
 	Optional<EnrollmentEntity> findByStudentIdAndAcademicYearId(UUID studentId, UUID academicYearId);
+
+	Optional<EnrollmentEntity> findByEstablishmentIdAndAcademicYearIdAndStudentId(
+		UUID establishmentId, UUID academicYearId, UUID studentId);
 
 	Optional<EnrollmentEntity> findByIdAndEstablishmentId(UUID id, UUID establishmentId);
 }

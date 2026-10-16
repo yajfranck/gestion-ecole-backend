@@ -35,6 +35,8 @@ tags:
   - name: Inscriptions
   - name: Postes
   - name: Personnel
+  - name: Contenus pédagogiques
+  - name: Licences
   - name: Santé
 paths:
   /api/v1/login:
@@ -304,6 +306,49 @@ paths:
         '409':
           description: Code établissement, matricule ou adresse email déjà utilisé.
   /api/v1/establishments/{establishmentId}:
+    patch:
+      tags:
+        - Établissements
+      summary: Modifier le code ou le nom d'un établissement
+      description: Requiert le rôle global ADMIN ou can_establishment_update. Pour un compte local, le service vérifie le rôle effectif ESTABLISHMENT_ADMIN et le rattachement exact à l'établissement. Les champs absents restent inchangés; null, chaîne vide ou blanche sont refusés.
+      operationId: updateEstablishment
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEstablishmentRequest'
+            examples:
+              rename:
+                value:
+                  name: École Exemple
+              changeCode:
+                value:
+                  code: ECOLE-001
+      responses:
+        '200':
+          description: Établissement modifié; id, enabled et createdAt sont conservés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EstablishmentResponse'
+        '400':
+          description: Corps vide, champ null/vide/blanc, mauvais type ou valeur trop longue.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Ni rôle ADMIN global, ni permission d'update avec rattachement et rôle local valides.
+        '404':
+          description: Établissement absent ou désactivé.
+        '409':
+          description: Code déjà utilisé.
     delete:
       tags:
         - Établissements
@@ -320,6 +365,171 @@ paths:
       responses:
         '204':
           description: Établissement et personnel désactivés.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance:
+    get:
+      tags:
+        - Présences
+      summary: Consulter la feuille d'appel d'une classe
+      description: Requiert can_attendance_read. Une ligne existe pour chaque élève actif inscrit; status vaut PRESENT, ABSENT ou NON_RENSEIGNE. La date doit être comprise dans l'année scolaire.
+      operationId: getClassAttendance
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Feuille et totaux présents, absents et non renseignés.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceSheetResponse'
+        '400':
+          description: Date invalide ou hors bornes de l'année.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission attendance absente ou établissement hors périmètre.
+        '404':
+          description: Établissement, année ou classe absents/inactifs.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance/{date}:
+    put:
+      tags:
+        - Présences
+      summary: Enregistrer ou corriger les pointages d'une classe pour la journée
+      description: Requiert can_attendance_write. Upsert idempotent par inscription/date; seuls les élèves transmis sont créés ou corrigés, les élèves omis restent inchangés. Pour modifier une ligne existante, expectedUpdatedAt doit égaler son updatedAt courant; une répétition identique sans changement peut omettre cette valeur. Les doublons strictement identiques sont acceptés; des doublons contradictoires invalident tout le lot. Toute validation est faite avant écriture et le lot est transactionnel.
+      operationId: putClassAttendance
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: schoolClassId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: date
+          in: path
+          required: true
+          schema:
+            type: string
+            format: date
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttendanceBatchRequest'
+            examples:
+              rollCall:
+                value:
+                  entries:
+                    - studentId: 9201df13-6b50-4a4a-a513-d7d554432334
+                      status: PRESENT
+                    - studentId: b9fd7208-5e49-48cb-9e50-22084540ad15
+                      status: ABSENT
+                      absenceJustified: true
+                      comment: Maladie signalée
+      responses:
+        '200':
+          description: Feuille recalculée après application du lot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceSheetResponse'
+        '400':
+          description: Lot vide/invalide, élève non inscrit, date hors année, justification incohérente ou doublons contradictoires. Aucune écriture n'est conservée.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission attendance absente ou établissement hors périmètre.
+        '404':
+          description: Établissement, année ou classe absents/inactifs.
+        '409':
+          description: Écriture concurrente incompatible; le lot est annulé.
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/attendance:
+    get:
+      tags:
+        - Présences
+      summary: Consulter l'historique de présence d'un élève
+      description: Requiert can_attendance_read. from et to sont inclusifs, doivent être ordonnés et compris dans l'année scolaire; la plage est limitée à 366 jours. records contient uniquement les journées pointées. L'historique reste consultable après archivage de l'élève ou de sa classe.
+      operationId: getStudentAttendance
+      parameters:
+        - name: establishmentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: academicYearId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: studentId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Pointages de l'élève dans la plage demandée.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceHistoryResponse'
+        '400':
+          description: Plage invalide, hors année ou supérieure à 366 jours.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Permission attendance absente ou établissement hors périmètre.
+        '404':
+          description: Élève sans inscription dans l'année ou contexte absent.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
@@ -459,176 +669,6 @@ paths:
           description: JWT absent, invalide ou expiré.
         '403':
           description: Permission absente ou établissement hors périmètre.
-
-  /api/v1/establishments/{establishmentId}/grade-levels:
-    get:
-      tags:
-        - Catalogue scolaire
-      summary: Lister les niveaux
-      description: Requiert can_grade_level_read; les niveaux sont triés par ordre d'affichage puis par nom.
-      operationId: getGradeLevels
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Niveaux actifs de l'établissement.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/GradeLevelResponse'
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_grade_level_read absente.
-        '404':
-          description: Établissement absent, désactivé ou hors périmètre.
-    post:
-      tags:
-        - Catalogue scolaire
-      summary: Créer un niveau
-      description: Requiert can_grade_level_create; code et nom sont uniques dans l'établissement, et le code est normalisé en majuscules.
-      operationId: createGradeLevel
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateGradeLevelRequest'
-      responses:
-        '201':
-          description: Niveau créé.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GradeLevelResponse'
-        '400':
-          description: Données invalides.
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_grade_level_create absente.
-        '404':
-          description: Établissement absent, désactivé ou hors périmètre.
-        '409':
-          description: Code ou nom déjà utilisé dans l'établissement.
-  /api/v1/establishments/{establishmentId}/grade-levels/{gradeLevelId}:
-    get:
-      tags:
-        - Catalogue scolaire
-      summary: Consulter un niveau
-      operationId: getGradeLevel
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: gradeLevelId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: Niveau.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GradeLevelResponse'
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_grade_level_read absente.
-        '404':
-          description: Niveau absent ou hors périmètre.
-    patch:
-      tags:
-        - Catalogue scolaire
-      summary: Modifier un niveau
-      description: Requiert can_grade_level_update.
-      operationId: updateGradeLevel
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: gradeLevelId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateGradeLevelRequest'
-      responses:
-        '200':
-          description: Niveau modifié.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/GradeLevelResponse'
-        '400':
-          description: Données invalides.
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_grade_level_update absente.
-        '404':
-          description: Niveau absent ou hors périmètre.
-        '409':
-          description: Code déjà utilisé dans l'établissement.
-    delete:
-      tags:
-        - Catalogue scolaire
-      summary: Archiver un niveau
-      description: Requiert can_grade_level_delete; refusé si une classe active le référence.
-      operationId: archiveGradeLevel
-      parameters:
-        - name: establishmentId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-        - name: gradeLevelId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '204':
-          description: Niveau archivé.
-        '401':
-          description: JWT absent, invalide ou expiré.
-        '403':
-          description: Permission can_grade_level_delete absente.
-        '404':
-          description: Niveau absent ou hors périmètre.
-        '409':
-          description: Le niveau est utilisé par une classe active.
 
   /api/v1/establishments/{establishmentId}/subjects:
     get:
@@ -839,7 +879,7 @@ paths:
       tags:
         - Catalogue scolaire
       summary: Créer une classe
-      description: Requiert can_school_class_create. L'année et le niveau doivent appartenir au même établissement; le code est unique dans l'année et le nom dans le niveau.
+      description: Requiert can_school_class_create. La classe appartient à l'année indiquée; son code est unique dans cette année.
       operationId: createSchoolClass
       parameters:
         - name: establishmentId
@@ -874,9 +914,9 @@ paths:
         '403':
           description: Permission can_school_class_create absente.
         '404':
-          description: Année, niveau ou établissement absent ou hors périmètre.
+          description: Année ou établissement absent ou hors périmètre.
         '409':
-          description: Code ou nom déjà utilisé dans l'année/niveau.
+          description: Code déjà utilisé dans l'année.
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}:
     get:
       tags:
@@ -960,9 +1000,9 @@ paths:
         '403':
           description: Permission can_school_class_update absente.
         '404':
-          description: Classe, année ou niveau absent ou hors périmètre.
+          description: Classe, année ou établissement absent ou hors périmètre.
         '409':
-          description: Code ou nom déjà utilisé dans l'année/niveau.
+          description: Code déjà utilisé dans l'année.
     delete:
       tags:
         - Catalogue scolaire
@@ -2095,7 +2135,7 @@ paths:
         '403':
           description: Permission can_tuition_create absente.
         '404':
-          description: Année, niveau ou élève absent ou hors périmètre.
+          description: Année, classe ou élève absent ou hors périmètre.
         '409':
           description: Un frais de même nom existe déjà pour l'année.
 
@@ -2862,6 +2902,395 @@ paths:
         '401':
           description: Invitation inconnue, expirée ou déjà utilisée.
 
+  /api/v1/guardians/me/children/{studentId}/summary:
+    get:
+      tags: [Parents et tuteurs]
+      summary: Consulter le résumé scolaire et financier d'un enfant
+      operationId: getGuardianChildSummary
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: query, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Résumé de l'enfant lié au parent authentifié.}
+        '403': {description: Permission ou licence parent absente.}
+        '404': {description: Enfant, année ou inscription active introuvable.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees:
+    get:
+      tags: [Parents et tuteurs]
+      summary: Lister les frais scolaires d'un enfant
+      operationId: getGuardianChildTuitionFees
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Créances, paiements et soldes de l'année demandée.}
+        '403': {description: Permission ou fonctionnalité TUITION/PARENT_PORTAL absente.}
+        '404': {description: Enfant lié, année ou inscription active introuvable.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees/{chargeId}/payments:
+    get:
+      tags: [Parents et tuteurs]
+      summary: Consulter l'historique des paiements d'une créance
+      operationId: getGuardianChildPayments
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: chargeId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+      responses:
+        '200': {description: Paiements dans la plage inclusive, limitée à 366 jours.}
+        '400': {description: Plage de dates invalide.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Créance ou enfant lié introuvable.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/attendance:
+    get:
+      tags: [Parents et tuteurs]
+      summary: Consulter les présences communiquées au parent
+      operationId: getGuardianChildAttendance
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: from, in: query, required: true, schema: {type: string, format: date}}
+        - {name: to, in: query, required: true, schema: {type: string, format: date}}
+      responses:
+        '200': {description: Historique limité au commentaire parent, sans commentaire interne ni identité du personnel.}
+        '400': {description: Plage de dates invalide.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Enfant lié, année ou inscription introuvable.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content:
+    get:
+      tags: [Parents et tuteurs, Contenus pédagogiques]
+      summary: Lister les contenus publiés de la classe de l'enfant
+      operationId: getGuardianLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: type, in: query, required: false, schema: {$ref: '#/components/schemas/LearningContentType'}}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: size, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200': {description: Liste paginée des contenus publiés de l'inscription active.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Enfant lié, année ou inscription introuvable.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content:
+    get:
+      tags: [Contenus pédagogiques]
+      summary: Lister les contenus d'une classe
+      operationId: getLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: type, in: query, required: false, schema: {$ref: '#/components/schemas/LearningContentType'}}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: size, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200': {description: Page de contenus, brouillons inclus pour le personnel autorisé.}
+        '400': {description: Pagination invalide.}
+        '403': {description: Permission ou licence LEARNING_CONTENT absente.}
+        '404': {description: Classe ou année introuvable.}
+    post:
+      tags: [Contenus pédagogiques]
+      summary: Créer un contenu brouillon
+      operationId: createLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LearningContentRequest'}
+      responses:
+        '201': {description: Brouillon créé.}
+        '400': {description: Corps, type, sujet ou date limite invalide.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Classe ou année introuvable.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}:
+    get:
+      tags: [Contenus pédagogiques]
+      summary: Consulter un contenu non archivé
+      operationId: getLearningContentById
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Contenu de classe.}
+        '403': {description: Permission absente ou hors périmètre.}
+        '404': {description: Contenu introuvable ou archivé.}
+    put:
+      tags: [Contenus pédagogiques]
+      summary: Mettre à jour un contenu non archivé
+      operationId: updateLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LearningContentRequest'}
+      responses:
+        '200': {description: Contenu mis à jour.}
+        '400': {description: Requête invalide.}
+        '403': {description: Permission absente ou hors périmètre.}
+        '404': {description: Contenu introuvable.}
+        '409': {description: État incompatible ou type modifié.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/publish:
+    post:
+      tags: [Contenus pédagogiques]
+      summary: Publier un brouillon
+      operationId: publishLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Contenu publié.}
+        '403': {description: Permission absente.}
+        '404': {description: Contenu introuvable.}
+        '409': {description: Le contenu n'est pas un brouillon.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/archive:
+    post:
+      tags: [Contenus pédagogiques]
+      summary: Archiver un contenu
+      operationId: archiveLearningContent
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Contenu archivé.}
+        '403': {description: Permission absente.}
+        '404': {description: Contenu introuvable.}
+  /api/v1/establishments/{establishmentId}/license:
+    get:
+      tags: [Licences]
+      summary: Lire les licences d'un établissement
+      operationId: getEstablishmentLicenses
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Licences et état courant.}
+        '403': {description: Permission can_license_read absente ou établissement hors périmètre.}
+        '404': {description: Établissement introuvable.}
+  /api/v1/admin/license-offers:
+    get:
+      tags: [Licences]
+      summary: Lister les offres actives
+      operationId: getLicenseOffers
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Offres configurées.}
+        '403': {description: Rôle ADMIN requis.}
+    post:
+      tags: [Licences]
+      summary: Créer une offre
+      operationId: createLicenseOffer
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateLicenseOfferRequest'}
+      responses:
+        '201': {description: Offre créée.}
+        '400': {description: Code, nom ou fonctionnalités invalides.}
+        '403': {description: Rôle ADMIN requis.}
+        '409': {description: Code déjà utilisé.}
+  /api/v1/admin/establishments/{establishmentId}/licenses:
+    post:
+      tags: [Licences]
+      summary: Attribuer ou remplacer une licence
+      operationId: assignEstablishmentLicense
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssignLicenseRequest'}
+      responses:
+        '201': {description: Licence attribuée et événement d'audit enregistré.}
+        '400': {description: Période invalide.}
+        '403': {description: Rôle ADMIN requis.}
+        '404': {description: Offre ou établissement introuvable.}
+        '409': {description: Chevauchement de licence incompatible.}
+  /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/suspend:
+    post:
+      tags: [Licences]
+      summary: Suspendre une licence
+      operationId: suspendEstablishmentLicense
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: licenseId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Licence suspendue.}
+        '403': {description: Rôle ADMIN requis.}
+        '404': {description: Licence ou établissement introuvable.}
+        '409': {description: Licence expirée ou déjà suspendue.}
+  /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/reactivate:
+    post:
+      tags: [Licences]
+      summary: Réactiver une licence suspendue non expirée
+      operationId: reactivateEstablishmentLicense
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: licenseId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Licence réactivée.}
+        '403': {description: Rôle ADMIN requis.}
+        '404': {description: Licence ou établissement introuvable.}
+        '409': {description: Licence non suspendue ou expirée.}
+  /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/end:
+    post:
+      tags: [Licences]
+      summary: Terminer immédiatement une licence
+      operationId: endEstablishmentLicense
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: licenseId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Licence terminée.}
+        '403': {description: Rôle ADMIN requis.}
+        '404': {description: Licence ou établissement introuvable.}
+        '409': {description: Licence déjà échue ou pas encore commencée.}
+  /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/events:
+    get:
+      tags: [Licences]
+      summary: Consulter l'audit d'une licence
+      operationId: getEstablishmentLicenseEvents
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: licenseId, in: path, required: true, schema: {type: integer, format: int64}}
+      responses:
+        '200': {description: Événements d'audit chronologiques.}
+        '403': {description: Rôle ADMIN requis.}
+        '404': {description: Licence ou établissement introuvable.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/attachments:
+    get:
+      tags: [Contenus pédagogiques]
+      summary: Lister les pièces jointes staff
+      operationId: getLearningAttachments
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Métadonnées sans chemin ni clé de stockage.}
+        '403': {description: Permission absente ou hors périmètre.}
+        '404': {description: Contenu introuvable.}
+    post:
+      tags: [Contenus pédagogiques]
+      summary: Ajouter une pièce jointe à un brouillon
+      operationId: uploadLearningAttachment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        '201': {description: Fichier stocké en espace privé et métadonnées créées.}
+        '400': {description: Type MIME/extension non autorisé ou taille invalide.}
+        '403': {description: Permission absente ou hors périmètre.}
+        '404': {description: Contenu introuvable.}
+        '409': {description: Le contenu n'est plus un brouillon.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/attachments/{attachmentId}:
+    get:
+      tags: [Contenus pédagogiques]
+      summary: Télécharger une pièce jointe staff
+      operationId: downloadLearningAttachment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: attachmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Fichier privé transmis comme pièce jointe.}
+        '403': {description: Permission absente ou hors périmètre.}
+        '404': {description: Contenu ou pièce jointe introuvable.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}:
+    get:
+      tags: [Parents et tuteurs, Contenus pédagogiques]
+      summary: Consulter un contenu publié
+      operationId: getGuardianLearningContentById
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Contenu publié de la classe active de l'enfant.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Contenu non publié ou hors inscription.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}/attachments:
+    get:
+      tags: [Parents et tuteurs, Contenus pédagogiques]
+      summary: Lister les pièces jointes d'un contenu publié
+      operationId: getGuardianLearningAttachments
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Métadonnées des fichiers publiés.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Contenu non publié ou hors inscription.}
+  /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}/attachments/{attachmentId}:
+    get:
+      tags: [Parents et tuteurs, Contenus pédagogiques]
+      summary: Télécharger une pièce jointe publiée
+      operationId: downloadGuardianLearningAttachment
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: studentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: attachmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200': {description: Fichier privé transmis comme pièce jointe.}
+        '403': {description: Permission ou licence absente.}
+        '404': {description: Contenu non publié ou pièce jointe hors périmètre.}
+
   /actuator/health:
     get:
       tags:
@@ -2893,6 +3322,104 @@ components:
       bearerFormat: JWT
       description: JWT obtenu par POST /api/v1/login.
   schemas:
+    LearningContentType:
+      type: string
+      enum: [LESSON, ASSIGNMENT]
+    LearningContentStatus:
+      type: string
+      enum: [DRAFT, PUBLISHED, ARCHIVED]
+    LicenseFeature:
+      type: string
+      enum: [SCHOOL_MANAGEMENT, STUDENT_RECORDS, PARENT_PORTAL, TUITION, ATTENDANCE, LEARNING_CONTENT]
+    LicenseState:
+      type: string
+      enum: [UPCOMING, ACTIVE, EXPIRED, SUSPENDED]
+    LearningContentRequest:
+      type: object
+      additionalProperties: false
+      required: [type, title]
+      properties:
+        type:
+          $ref: '#/components/schemas/LearningContentType'
+        title:
+          type: string
+          minLength: 1
+          maxLength: 160
+        description:
+          type: [string, 'null']
+          maxLength: 2000
+        body:
+          type: [string, 'null']
+          maxLength: 100000
+        subjectId:
+          type: [string, 'null']
+          format: uuid
+        dueDate:
+          type: [string, 'null']
+          format: date
+    LearningContentResponse:
+      type: object
+      required: [id, establishmentId, academicYearId, schoolClassId, type, title, status, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        establishmentId: {type: string, format: uuid}
+        academicYearId: {type: string, format: uuid}
+        schoolClassId: {type: string, format: uuid}
+        subjectId: {type: [string, 'null'], format: uuid}
+        type: {$ref: '#/components/schemas/LearningContentType'}
+        title: {type: string}
+        description: {type: [string, 'null']}
+        body: {type: [string, 'null']}
+        dueDate: {type: [string, 'null'], format: date}
+        status: {$ref: '#/components/schemas/LearningContentStatus'}
+        publishedAt: {type: [string, 'null'], format: date-time}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+    LearningContentPageResponse:
+      type: object
+      required: [contents, totalElements, page, size]
+      properties:
+        contents:
+          type: array
+          items: {$ref: '#/components/schemas/LearningContentResponse'}
+        totalElements: {type: integer, format: int64}
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1, maximum: 100}
+    CreateLicenseOfferRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name, features]
+      properties:
+        code: {type: string, minLength: 2, maxLength: 40, pattern: '^[A-Za-z0-9_-]+$'}
+        name: {type: string, minLength: 1, maxLength: 100}
+        features:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/LicenseFeature'}
+    AssignLicenseRequest:
+      type: object
+      additionalProperties: false
+      required: [offerId]
+      properties:
+        offerId: {type: string, format: uuid}
+        validFrom: {type: [string, 'null'], format: date-time}
+        validUntil: {type: [string, 'null'], format: date-time}
+    PlatformLicenseResponse:
+      type: object
+      required: [id, establishmentId, offerId, offerCode, offerName, validFrom, validUntil, suspendedAt, state, createdBy, createdAt]
+      properties:
+        id: {type: integer, format: int64}
+        establishmentId: {type: string, format: uuid}
+        offerId: {type: string, format: uuid}
+        offerCode: {type: string}
+        offerName: {type: string}
+        validFrom: {type: string, format: date-time}
+        validUntil: {type: [string, 'null'], format: date-time}
+        suspendedAt: {type: [string, 'null'], format: date-time}
+        state: {$ref: '#/components/schemas/LicenseState'}
+        createdBy: {type: string}
+        createdAt: {type: string, format: date-time}
     LoginRequest:
       type: object
       additionalProperties: false
@@ -3223,6 +3750,23 @@ components:
         updatedAt:
           type: string
           format: date-time
+    UpdateEstablishmentRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 40
+          pattern: '.*\S.*'
+          description: Normalisé en majuscules. Absent signifie inchangé; null, vide ou blanc sont refusés.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: '.*\S.*'
+          description: Nettoyé par trim. Absent signifie inchangé; null, vide ou blanc sont refusés.
     CreateEnrollmentRequest:
       type: object
       additionalProperties: false
@@ -3353,7 +3897,7 @@ components:
         dueDate:
           type: string
           format: date
-        gradeLevelId:
+        schoolClassId:
           type:
             - string
             - 'null'
@@ -3408,9 +3952,9 @@ components:
           type: string
           enum:
             - ACADEMIC_YEAR
-            - GRADE_LEVEL
+            - SCHOOL_CLASS
             - STUDENT
-        gradeLevelId:
+        schoolClassId:
           type:
             - string
             - 'null'
@@ -3504,6 +4048,199 @@ components:
           type: string
         lastName:
           type: string
+    AttendanceEntryRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - studentId
+        - status
+      properties:
+        studentId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+            - PRESENT
+            - ABSENT
+        absenceJustified:
+          type: boolean
+          default: false
+          description: Ne peut être vrai que lorsque status vaut ABSENT.
+        comment:
+          type: string
+          maxLength: 500
+        expectedUpdatedAt:
+          type: string
+          format: date-time
+          description: Valeur updatedAt lue par le client, requise pour toute correction qui change un pointage existant.
+    AttendanceBatchRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - entries
+      properties:
+        entries:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/AttendanceEntryRequest'
+    AttendanceEntryResponse:
+      type: object
+      required:
+        - studentId
+        - studentNumber
+        - firstName
+        - lastName
+        - status
+        - absenceJustified
+        - comment
+        - createdBy
+        - updatedBy
+        - createdAt
+        - updatedAt
+      properties:
+        studentId:
+          type: string
+          format: uuid
+        studentNumber:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        status:
+          type: string
+          enum:
+            - PRESENT
+            - ABSENT
+            - NON_RENSEIGNE
+        absenceJustified:
+          type: boolean
+        comment:
+          type:
+            - string
+            - 'null'
+        createdBy:
+          type:
+            - string
+            - 'null'
+        updatedBy:
+          type:
+            - string
+            - 'null'
+        createdAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        updatedAt:
+          type:
+            - string
+            - 'null'
+          format: date-time
+    AttendanceSheetResponse:
+      type: object
+      required:
+        - establishmentId
+        - academicYearId
+        - schoolClassId
+        - date
+        - presentCount
+        - absentCount
+        - unreportedCount
+        - entries
+      properties:
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        schoolClassId:
+          type: string
+          format: uuid
+        date:
+          type: string
+          format: date
+        presentCount:
+          type: integer
+          minimum: 0
+        absentCount:
+          type: integer
+          minimum: 0
+        unreportedCount:
+          type: integer
+          minimum: 0
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendanceEntryResponse'
+    AttendanceHistoryEntryResponse:
+      type: object
+      required:
+        - date
+        - status
+        - absenceJustified
+        - comment
+        - createdBy
+        - updatedBy
+        - createdAt
+        - updatedAt
+      properties:
+        date:
+          type: string
+          format: date
+        status:
+          type: string
+          enum:
+            - PRESENT
+            - ABSENT
+        absenceJustified:
+          type: boolean
+        comment:
+          type:
+            - string
+            - 'null'
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    AttendanceHistoryResponse:
+      type: object
+      required:
+        - establishmentId
+        - academicYearId
+        - studentId
+        - from
+        - to
+        - records
+      properties:
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        studentId:
+          type: string
+          format: uuid
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        records:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendanceHistoryEntryResponse'
     FeeCreationResponse:
       type: object
       required:
@@ -3824,75 +4561,6 @@ components:
           type: string
         lastName:
           type: string
-    CreateGradeLevelRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - code
-        - name
-        - displayOrder
-      properties:
-        code:
-          type: string
-          minLength: 1
-          maxLength: 40
-        name:
-          type: string
-          minLength: 1
-          maxLength: 100
-        displayOrder:
-          type: integer
-          minimum: 0
-    UpdateGradeLevelRequest:
-      type: object
-      additionalProperties: false
-      required:
-        - code
-        - name
-      properties:
-        code:
-          type: string
-          minLength: 1
-          maxLength: 40
-        name:
-          type: string
-          minLength: 1
-          maxLength: 100
-        displayOrder:
-          type: integer
-          minimum: 0
-    GradeLevelResponse:
-      type: object
-      required:
-        - id
-        - establishmentId
-        - code
-        - name
-        - displayOrder
-        - enabled
-        - createdAt
-        - updatedAt
-      properties:
-        id:
-          type: string
-          format: uuid
-        establishmentId:
-          type: string
-          format: uuid
-        code:
-          type: string
-        name:
-          type: string
-        displayOrder:
-          type: integer
-        enabled:
-          type: boolean
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
     CreateSubjectRequest:
       type: object
       additionalProperties: false
@@ -3956,13 +4624,9 @@ components:
       type: object
       additionalProperties: false
       required:
-        - gradeLevelId
         - code
         - name
       properties:
-        gradeLevelId:
-          type: string
-          format: uuid
         code:
           type: string
           minLength: 1
@@ -3978,9 +4642,6 @@ components:
         - code
         - name
       properties:
-        gradeLevelId:
-          type: string
-          format: uuid
         code:
           type: string
           minLength: 1
@@ -3995,7 +4656,6 @@ components:
         - id
         - establishmentId
         - academicYearId
-        - gradeLevelId
         - code
         - name
         - enabled
@@ -4009,9 +4669,6 @@ components:
           type: string
           format: uuid
         academicYearId:
-          type: string
-          format: uuid
-        gradeLevelId:
           type: string
           format: uuid
         code:

@@ -2,6 +2,7 @@ package com.galactique.gestionecole;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,5 +49,21 @@ class ProductionFlywayTests {
 			.collect(java.util.stream.Collectors.toSet());
 		assertTrue(permissionCodes.containsAll(java.util.Set.of(
 			"can_role_read", "can_role_create", "can_role_update", "can_permission_read")));
+	}
+
+	@Test
+	void newEstablishmentAndAttendancePermissionsAreScopedToEstablishmentAdmin() {
+		var establishmentAdmin = roleJpaRepository.findByCode("ESTABLISHMENT_ADMIN").orElseThrow();
+		var establishmentAdminPermissions = establishmentAdmin.getPermissions().stream()
+			.map(permission -> permission.getCode()).collect(java.util.stream.Collectors.toSet());
+		assertTrue(establishmentAdminPermissions.containsAll(java.util.Set.of(
+			"can_establishment_update", "can_attendance_read", "can_attendance_write")));
+
+		var admin = roleJpaRepository.findByCode("ADMIN").orElseThrow();
+		var adminPermissions = admin.getPermissions().stream()
+			.map(permission -> permission.getCode()).collect(java.util.stream.Collectors.toSet());
+		assertFalse(adminPermissions.contains("can_establishment_update"));
+		assertFalse(adminPermissions.contains("can_attendance_read"));
+		assertFalse(adminPermissions.contains("can_attendance_write"));
 	}
 }

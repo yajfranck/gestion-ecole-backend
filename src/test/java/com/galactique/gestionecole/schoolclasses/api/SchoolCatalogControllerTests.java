@@ -21,6 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
@@ -29,36 +31,20 @@ import com.jayway.jsonpath.JsonPath;
 class SchoolCatalogControllerTests {
 	private final MockMvc mockMvc;
 	private final EstablishmentRepository establishmentRepository;
+	private final LicenseApplicationService licenseApplicationService;
 
 	@Autowired
-	SchoolCatalogControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository) {
+	SchoolCatalogControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
+		LicenseApplicationService licenseApplicationService) {
 		this.mockMvc = mockMvc;
 		this.establishmentRepository = establishmentRepository;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Test
-	void configuresLevelsClassesSubjectsAndClassSubjectAssignments() throws Exception {
+	void configuresClassesSubjectsAndClassSubjectAssignments() throws Exception {
 		Establishment establishment = createEstablishment();
 		String establishmentUrl = "/api/v1/establishments/" + establishment.id();
-		String gradeLevelResponse = mockMvc.perform(post(establishmentUrl + "/grade-levels")
-			.with(administrator("can_grade_level_create"))
-			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"P1\",\"name\":\"Primary 1\",\"displayOrder\":1}"))
-			.andExpect(status().isCreated())
-			.andReturn()
-			.getResponse()
-			.getContentAsString();
-		String gradeLevelId = JsonPath.read(gradeLevelResponse, "$.id");
-		mockMvc.perform(get(establishmentUrl + "/grade-levels/" + gradeLevelId)
-			.with(administrator("can_grade_level_read")))
-			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.code").value("P1"));
-		mockMvc.perform(post(establishmentUrl + "/grade-levels")
-			.with(administrator("can_grade_level_create"))
-			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"P2\",\"name\":\"Primary 1\",\"displayOrder\":2}"))
-			.andExpect(status().isConflict());
-
 		String subjectResponse = mockMvc.perform(post(establishmentUrl + "/subjects")
 			.with(administrator("can_subject_create"))
 			.contentType(MediaType.APPLICATION_JSON)
@@ -87,7 +73,7 @@ class SchoolCatalogControllerTests {
 		String schoolClassResponse = mockMvc.perform(post(classesUrl)
 			.with(administrator("can_school_class_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"gradeLevelId\":\"" + gradeLevelId + "\",\"code\":\"P1-A\",\"name\":\"Primary 1 A\"}"))
+			.content("{\"code\":\"P1-A\",\"name\":\"Primary 1 A\"}"))
 			.andExpect(status().isCreated())
 			.andReturn()
 			.getResponse()
@@ -96,12 +82,8 @@ class SchoolCatalogControllerTests {
 		mockMvc.perform(get(classesUrl + "/" + schoolClassId)
 			.with(administrator("can_school_class_read")))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.code").value("P1-A"));
-
-		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.delete(establishmentUrl + "/grade-levels/" + gradeLevelId)
-			.with(administrator("can_grade_level_delete")))
-			.andExpect(status().isConflict());
+			.andExpect(jsonPath("$.code").value("P1-A"))
+			.andExpect(jsonPath("$.gradeLevelId").doesNotExist());
 
 		mockMvc.perform(put(classesUrl + "/" + schoolClassId + "/subjects/" + subjectId)
 			.with(administrator("can_class_subject_assign")))
@@ -120,18 +102,10 @@ class SchoolCatalogControllerTests {
 			.andExpect(jsonPath("$[0].subjectId").value(subjectId));
 	}
 
-	@Test
-	void staffWithoutCatalogPermissionCannotReadGradeLevels() throws Exception {
-		Establishment establishment = createEstablishment();
-
-		mockMvc.perform(get("/api/v1/establishments/" + establishment.id() + "/grade-levels")
-			.with(user("teacher@example.org").authorities(new SimpleGrantedAuthority("STAFF_ACCESS"))))
-			.andExpect(status().isForbidden());
-	}
-
 	private Establishment createEstablishment() {
 		String code = "CAT-" + UUID.randomUUID().toString().substring(0, 8);
-		return establishmentRepository.save(code, "Catalog Test School");
+		return LicensedEstablishmentFixture.create(establishmentRepository, licenseApplicationService,
+			code, "Catalog Test School");
 	}
 
 	private static org.springframework.test.web.servlet.request.RequestPostProcessor administrator(String permission) {

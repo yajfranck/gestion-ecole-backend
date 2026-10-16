@@ -245,6 +245,16 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 		if (actor.globalAdministrator()) {
 			return establishmentRepository.findAll();
 		}
+		if (actor.scopedEstablishmentId() != null) {
+			employeeRepository.findByEmail(actor.username())
+				.filter(Employee::enabled)
+				.filter(employee -> employee.userAccountId() != null)
+				.filter(employee -> actor.scopedEstablishmentId().equals(employee.establishmentId()))
+				.orElseThrow(EmployeeAccessDeniedException::new);
+			return establishmentRepository.findById(actor.scopedEstablishmentId())
+				.filter(com.galactique.gestionecole.establishments.domain.Establishment::enabled)
+				.stream().toList();
+		}
 		Employee actorEmployee = requireEstablishmentAdministrator(actor);
 		return establishmentRepository.findById(actorEmployee.establishmentId()).stream().toList();
 	}

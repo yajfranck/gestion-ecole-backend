@@ -20,6 +20,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
@@ -28,11 +30,14 @@ import com.jayway.jsonpath.JsonPath;
 class EnrollmentControllerTests {
 	private final MockMvc mockMvc;
 	private final EstablishmentRepository establishmentRepository;
+	private final LicenseApplicationService licenseApplicationService;
 
 	@Autowired
-	EnrollmentControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository) {
+	EnrollmentControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
+		LicenseApplicationService licenseApplicationService) {
 		this.mockMvc = mockMvc;
 		this.establishmentRepository = establishmentRepository;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Test
@@ -48,18 +53,8 @@ class EnrollmentControllerTests {
 			.getResponse()
 			.getContentAsString();
 		String studentId = JsonPath.read(studentResponse, "$.id");
-		String gradeLevelResponse = mockMvc.perform(post(establishmentUrl + "/grade-levels")
-			.with(administrator("can_grade_level_create"))
-			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"P1\",\"name\":\"Primary 1\",\"displayOrder\":1}"))
-			.andExpect(status().isCreated())
-			.andReturn()
-			.getResponse()
-			.getContentAsString();
-		String gradeLevelId = JsonPath.read(gradeLevelResponse, "$.id");
-
 		String firstYearId = createYear(establishmentUrl, "2025-2026");
-		String firstClassId = createClass(establishmentUrl, firstYearId, gradeLevelId, "P1-A");
+		String firstClassId = createClass(establishmentUrl, firstYearId, "P1-A");
 		String firstYearEnrollmentsUrl = enrollmentUrl(establishmentUrl, firstYearId);
 		String enrollmentRequest = enrollmentRequest(studentId, firstClassId);
 
@@ -89,7 +84,7 @@ class EnrollmentControllerTests {
 			.andExpect(jsonPath("$[0].id").value(studentId));
 
 		String secondYearId = createYear(establishmentUrl, "2026-2027");
-		String secondClassId = createClass(establishmentUrl, secondYearId, gradeLevelId, "P1-B");
+		String secondClassId = createClass(establishmentUrl, secondYearId, "P1-B");
 		mockMvc.perform(post(enrollmentUrl(establishmentUrl, secondYearId))
 			.with(administrator("can_enrollment_create"))
 			.contentType(MediaType.APPLICATION_JSON)
@@ -129,13 +124,11 @@ class EnrollmentControllerTests {
 		return JsonPath.read(response, "$.id");
 	}
 
-	private String createClass(String establishmentUrl, String academicYearId, String gradeLevelId,
-		String code) throws Exception {
+	private String createClass(String establishmentUrl, String academicYearId, String code) throws Exception {
 		String response = mockMvc.perform(post(establishmentUrl + "/school-years/" + academicYearId + "/classes")
 			.with(administrator("can_school_class_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"gradeLevelId\":\"" + gradeLevelId + "\",\"code\":\"" + code
-				+ "\",\"name\":\"Primary 1 " + code + "\"}"))
+			.content("{\"code\":\"" + code + "\",\"name\":\"Class " + code + "\"}"))
 			.andExpect(status().isCreated())
 			.andReturn()
 			.getResponse()
@@ -145,7 +138,8 @@ class EnrollmentControllerTests {
 
 	private Establishment createEstablishment() {
 		String code = "ENR-" + UUID.randomUUID().toString().substring(0, 8);
-		return establishmentRepository.save(code, "Enrollment Test School");
+		return LicensedEstablishmentFixture.create(establishmentRepository, licenseApplicationService,
+			code, "Enrollment Test School");
 	}
 
 	private static String enrollmentUrl(String establishmentUrl, String academicYearId) {

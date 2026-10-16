@@ -28,6 +28,8 @@ import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.students.domain.StudentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class GuardianApplicationService {
@@ -42,12 +44,13 @@ public class GuardianApplicationService {
 	private final SecurityAccountProvisioner securityAccountProvisioner;
 	private final UserAccountRepository userAccountRepository;
 	private final GuardianInvitationMailer invitationMailer;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public GuardianApplicationService(GuardianRepository guardianRepository,
 		GuardianInvitationRepository invitationRepository, StudentRepository studentRepository,
 		EmployeeApplicationService employeeApplicationService,
 		SecurityAccountProvisioner securityAccountProvisioner, UserAccountRepository userAccountRepository,
-		GuardianInvitationMailer invitationMailer) {
+		GuardianInvitationMailer invitationMailer, LicenseApplicationService licenseApplicationService) {
 		this.guardianRepository = guardianRepository;
 		this.invitationRepository = invitationRepository;
 		this.studentRepository = studentRepository;
@@ -55,6 +58,7 @@ public class GuardianApplicationService {
 		this.securityAccountProvisioner = securityAccountProvisioner;
 		this.userAccountRepository = userAccountRepository;
 		this.invitationMailer = invitationMailer;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional
@@ -142,8 +146,21 @@ public class GuardianApplicationService {
 		return guardianRepository.findByEmail(username.strip().toLowerCase(Locale.ROOT))
 			.filter(guardian -> guardian.enabled())
 			.filter(guardian -> guardian.userAccountId() != null)
-			.map(guardian -> guardianRepository.findChildren(guardian.id()))
+			.map(guardian -> guardianRepository.findChildren(guardian.id()).stream()
+				.filter(student -> licenseApplicationService.hasFeature(student.establishmentId(),
+					LicenseFeature.PARENT_PORTAL, Instant.now()))
+				.toList())
 			.orElseGet(List::of);
+	}
+
+	@Transactional(readOnly = true)
+	public Student findLinkedChild(String username, UUID studentId) {
+		Guardian guardian = guardianRepository.findByEmail(username.strip().toLowerCase(Locale.ROOT))
+			.filter(Guardian::enabled)
+			.filter(item -> item.userAccountId() != null)
+			.orElseThrow(GuardianNotFoundException::new);
+		return guardianRepository.findLinkedChild(guardian.id(), studentId)
+			.orElseThrow(GuardianNotFoundException::new);
 	}
 
 	private void requireAccessibleStudent(UUID establishmentId, UUID studentId, EmployeeActor actor) {

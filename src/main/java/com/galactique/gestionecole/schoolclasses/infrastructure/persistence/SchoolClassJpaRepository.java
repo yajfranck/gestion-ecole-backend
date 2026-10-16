@@ -11,16 +11,14 @@ public interface SchoolClassJpaRepository extends JpaRepository<SchoolClassEntit
 
 	boolean existsByAcademicYearIdAndCodeIgnoreCaseAndIdNot(UUID academicYearId, String code, UUID id);
 
-	boolean existsByAcademicYearIdAndGradeLevelIdAndNameIgnoreCase(
-		UUID academicYearId, UUID gradeLevelId, String name);
-
 	List<SchoolClassEntity> findAllByEstablishmentIdAndAcademicYearIdAndEnabledTrueOrderByNameAsc(
 		UUID establishmentId, UUID academicYearId);
-
-	boolean existsByEstablishmentIdAndGradeLevelIdAndEnabledTrue(UUID establishmentId, UUID gradeLevelId);
 
 	Optional<SchoolClassEntity> findByIdAndEstablishmentIdAndEnabledTrue(UUID id, UUID establishmentId);
 
 	Optional<SchoolClassEntity> findByIdAndEstablishmentIdAndAcademicYearIdAndEnabledTrue(
+		UUID id, UUID establishmentId, UUID academicYearId);
+
+	Optional<SchoolClassEntity> findByIdAndEstablishmentIdAndAcademicYearId(
 		UUID id, UUID establishmentId, UUID academicYearId);
 }

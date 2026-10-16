@@ -17,6 +17,6 @@ public record CreateTuitionFeeRequest(
 	@NotBlank @Pattern(regexp = "[A-Za-z]{3}") String currency,
 	@NotNull LocalDate dueDate,
 	@NotNull UUID feeTypeId,
-	UUID gradeLevelId,
+	UUID schoolClassId,
 	UUID studentId) {
 }

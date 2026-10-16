@@ -9,7 +9,11 @@ public interface StudentRepository {
 
 	List<Student> findAllByEstablishmentId(UUID establishmentId);
 
+	List<Student> findActiveByEstablishmentIdAndIds(UUID establishmentId, List<UUID> studentIds);
+
 	Optional<Student> findByIdAndEstablishmentId(UUID studentId, UUID establishmentId);
+
+	Optional<Student> findIncludingArchivedByIdAndEstablishmentId(UUID studentId, UUID establishmentId);
 
 	Student updateProfile(UUID studentId, UUID establishmentId, String firstName, String lastName);
 

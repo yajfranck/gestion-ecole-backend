@@ -10,4 +10,10 @@ public interface EnrollmentRepository {
 
 	List<Enrollment> findAllByEstablishmentIdAndAcademicYearId(UUID establishmentId, UUID academicYearId);
 
+	List<Enrollment> findAllByEstablishmentIdAndAcademicYearIdAndSchoolClassId(
+		UUID establishmentId, UUID academicYearId, UUID schoolClassId);
+
+	java.util.Optional<Enrollment> findByEstablishmentIdAndAcademicYearIdAndStudentId(
+		UUID establishmentId, UUID academicYearId, UUID studentId);
+
 }

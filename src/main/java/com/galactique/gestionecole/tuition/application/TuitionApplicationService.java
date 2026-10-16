@@ -7,6 +7,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 
 import org.springframework.dao.DataIntegrityViolationException;
@@ -40,6 +41,8 @@ import com.galactique.gestionecole.tuition.domain.TuitionFeeDraft;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeType;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeTypeDraft;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class TuitionApplicationService {
@@ -49,19 +52,22 @@ public class TuitionApplicationService {
 	private final SchoolCalendarApplicationService schoolCalendarApplicationService;
 	private final SchoolCatalogApplicationService schoolCatalogApplicationService;
 	private final EnrollmentApplicationService enrollmentApplicationService;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public TuitionApplicationService(TuitionRepository tuitionRepository,
 		EmployeeApplicationService employeeApplicationService,
 		StudentApplicationService studentApplicationService,
 		SchoolCalendarApplicationService schoolCalendarApplicationService,
 		SchoolCatalogApplicationService schoolCatalogApplicationService,
-		EnrollmentApplicationService enrollmentApplicationService) {
+		EnrollmentApplicationService enrollmentApplicationService,
+		LicenseApplicationService licenseApplicationService) {
 		this.tuitionRepository = tuitionRepository;
 		this.employeeApplicationService = employeeApplicationService;
 		this.studentApplicationService = studentApplicationService;
 		this.schoolCalendarApplicationService = schoolCalendarApplicationService;
 		this.schoolCatalogApplicationService = schoolCatalogApplicationService;
 		this.enrollmentApplicationService = enrollmentApplicationService;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional(readOnly = true)
@@ -81,12 +87,13 @@ public class TuitionApplicationService {
 			.filter(TuitionFeeType::enabled).orElseThrow(TuitionNotFoundException::new);
 		if (command.dueDate() == null || command.dueDate().isBefore(year.startsOn())
 			|| command.dueDate().isAfter(year.endsOn())
-			|| (command.gradeLevelId() != null && command.studentId() != null)) {
-			throw new TuitionValidationException("Due date must be within the academic year and a fee cannot target both a grade and a student");
+			|| (command.schoolClassId() != null && command.studentId() != null)) {
+			throw new TuitionValidationException("Due date must be within the academic year and a fee cannot target both a class and a student");
 		}
 		try {
-			if (command.gradeLevelId() != null) {
-				schoolCatalogApplicationService.findGradeLevel(establishmentId, command.gradeLevelId(), actor);
+			if (command.schoolClassId() != null) {
+				schoolCatalogApplicationService.findClass(
+					establishmentId, academicYearId, command.schoolClassId(), actor);
 			}
 			if (command.studentId() != null) {
 				studentApplicationService.findById(establishmentId, command.studentId(), actor);
@@ -101,7 +108,7 @@ public class TuitionApplicationService {
 		try {
 			fee = tuitionRepository.saveFee(new TuitionFeeDraft(establishmentId, academicYearId,
 				feeType.id(), feeType.code(), feeType.name(), normalizedName, normalizedAmount, normalizedCurrency, command.dueDate(),
-				command.gradeLevelId(), command.studentId()));
+				command.schoolClassId(), command.studentId()));
 		} catch (DataIntegrityViolationException exception) {
 			throw new TuitionConflictException();
 		}
@@ -125,6 +132,36 @@ public class TuitionApplicationService {
 		validateStudent(establishmentId, studentId, actor);
 		return tuitionRepository.findChargesForStudent(establishmentId, studentId).stream()
 			.map(this::toBalance).toList();
+	}
+
+	@Transactional(readOnly = true)
+	public List<ChargeBalance> findStudentChargesForGuardian(UUID establishmentId, UUID studentId,
+		UUID academicYearId) {
+		requireTuitionLicense(establishmentId);
+		List<StudentFeeCharge> charges = tuitionRepository.findChargesForStudentAndYear(
+			establishmentId, studentId, academicYearId);
+		Map<UUID, List<TuitionPayment>> paymentsByCharge = new java.util.HashMap<>();
+		for (TuitionPayment payment : tuitionRepository.findPaymentsForCharges(
+			charges.stream().map(StudentFeeCharge::id).toList())) {
+			paymentsByCharge.computeIfAbsent(payment.chargeId(), ignored -> new ArrayList<>()).add(payment);
+		}
+		return charges.stream().map(charge -> toBalance(charge,
+			paymentsByCharge.getOrDefault(charge.id(), List.of()))).toList();
+	}
+
+	@Transactional(readOnly = true)
+	public List<TuitionPayment> findPaymentsForGuardian(UUID establishmentId, UUID studentId,
+		UUID academicYearId, UUID chargeId, LocalDate from, LocalDate to) {
+		requireTuitionLicense(establishmentId);
+		if (from == null || to == null || to.isBefore(from)
+			|| java.time.temporal.ChronoUnit.DAYS.between(from, to) >= 366) {
+			throw new TuitionValidationException("Payment history range must be valid and not exceed 366 days");
+		}
+		tuitionRepository.findCharge(chargeId, establishmentId, studentId, academicYearId)
+			.orElseThrow(TuitionNotFoundException::new);
+		java.time.Instant start = from.atStartOfDay(ZoneOffset.UTC).toInstant();
+		java.time.Instant end = to.plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant().minusNanos(1);
+		return tuitionRepository.findPaymentsForChargeBetween(chargeId, establishmentId, studentId, start, end);
 	}
 
 	@Transactional(readOnly = true)
@@ -303,13 +340,13 @@ public class TuitionApplicationService {
 		if (fee.studentId() != null && !fee.studentId().equals(enrollment.studentId())) {
 			return false;
 		}
-		if (fee.gradeLevelId() == null) {
+		if (fee.schoolClassId() == null) {
 			return true;
 		}
 		try {
 			SchoolClass schoolClass = schoolCatalogApplicationService.findClass(fee.establishmentId(),
 				fee.academicYearId(), enrollment.schoolClassId(), actor);
-			return fee.gradeLevelId().equals(schoolClass.gradeLevelId());
+			return fee.schoolClassId().equals(schoolClass.id());
 		} catch (SchoolCatalogNotFoundException exception) {
 			return false;
 		} catch (SchoolCatalogAccessDeniedException exception) {
@@ -334,6 +371,10 @@ public class TuitionApplicationService {
 
 	private ChargeBalance toBalance(StudentFeeCharge charge) {
 		List<TuitionPayment> payments = tuitionRepository.findPayments(charge.id());
+		return toBalance(charge, payments);
+	}
+
+	private ChargeBalance toBalance(StudentFeeCharge charge, List<TuitionPayment> payments) {
 		BigDecimal paid = payments.stream().map(TuitionPayment::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
 		return new ChargeBalance(charge, paid, charge.amount().subtract(paid),
 			charge.dueDate().isBefore(LocalDate.now(ZoneOffset.UTC)) && charge.amount().compareTo(paid) > 0, payments);
@@ -362,6 +403,7 @@ public class TuitionApplicationService {
 	}
 
 	private void requireEstablishment(UUID establishmentId, EmployeeActor actor) {
+		requireTuitionLicense(establishmentId);
 		try {
 			boolean accessible = employeeApplicationService.findEstablishments(actor).stream()
 				.anyMatch(establishment -> establishment.enabled() && establishment.id().equals(establishmentId));
@@ -369,6 +411,13 @@ public class TuitionApplicationService {
 				throw new TuitionNotFoundException();
 			}
 		} catch (EmployeeAccessDeniedException exception) {
+			throw new TuitionAccessDeniedException();
+		}
+	}
+
+	private void requireTuitionLicense(UUID establishmentId) {
+		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.TUITION,
+			java.time.Instant.now())) {
 			throw new TuitionAccessDeniedException();
 		}
 	}

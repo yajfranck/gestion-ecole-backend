@@ -5,13 +5,12 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
-public record SchoolClass(UUID id, UUID establishmentId, UUID academicYearId, UUID gradeLevelId,
-	String code, String name, boolean enabled, Instant createdAt, Instant updatedAt) {
+public record SchoolClass(UUID id, UUID establishmentId, UUID academicYearId, String code, String name,
+	boolean enabled, Instant createdAt, Instant updatedAt) {
 	public SchoolClass {
 		Objects.requireNonNull(id, "id must not be null");
 		Objects.requireNonNull(establishmentId, "establishmentId must not be null");
 		Objects.requireNonNull(academicYearId, "academicYearId must not be null");
-		Objects.requireNonNull(gradeLevelId, "gradeLevelId must not be null");
 		code = required(code, "code", 40).toUpperCase(Locale.ROOT);
 		name = required(name, "name", 100);
 		Objects.requireNonNull(createdAt, "createdAt must not be null");

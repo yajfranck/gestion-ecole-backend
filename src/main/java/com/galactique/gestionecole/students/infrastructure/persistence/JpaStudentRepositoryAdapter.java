@@ -36,8 +36,24 @@ public class JpaStudentRepositoryAdapter implements StudentRepository {
 
 	@Override
 	@Transactional(readOnly = true)
+	public List<Student> findActiveByEstablishmentIdAndIds(UUID establishmentId, List<UUID> studentIds) {
+		if (studentIds.isEmpty()) {
+			return List.of();
+		}
+		return jpaRepository.findAllByEstablishmentIdAndIdInAndEnabledTrue(establishmentId, studentIds)
+			.stream().map(this::toDomain).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
 	public Optional<Student> findByIdAndEstablishmentId(UUID studentId, UUID establishmentId) {
 		return jpaRepository.findByIdAndEstablishmentIdAndEnabledTrue(studentId, establishmentId).map(this::toDomain);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<Student> findIncludingArchivedByIdAndEstablishmentId(UUID studentId, UUID establishmentId) {
+		return jpaRepository.findByIdAndEstablishmentId(studentId, establishmentId).map(this::toDomain);
 	}
 
 	@Override

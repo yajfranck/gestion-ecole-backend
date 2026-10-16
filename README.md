@@ -2,7 +2,7 @@
 
 > **Document de cadrage fonctionnel et technique**  
 > Version 1.0 — 14 octobre 2026  
-> État : spécifications de référence, le produit reste à développer.
+> État : spécifications de référence; l'implémentation du backend est en cours.
 
 ## 1. Vision du produit
 
@@ -40,7 +40,7 @@ Le super administrateur définit les paramètres de référence et les valeurs d
 
 | Paramètre | Référence plateforme | Réglage établissement |
 |---|---|---|
-| Pays et programmes scolaires | Catalogue par pays et niveaux | Programme applicable, niveaux ouverts |
+| Pays et programmes scolaires | Catalogue de programmes | Programme applicable |
 | Notation | Barèmes et règles de calcul disponibles | Barème, coefficients et règles autorisés |
 | Devise | Devises prises en charge | Devise de facturation de l’école |
 | Paiements | Fournisseurs et méthodes disponibles | Méthodes acceptées par l’école |
@@ -93,19 +93,19 @@ Le modèle doit permettre de préciser les droits fins sans multiplier inutileme
 - Création et paramétrage d’un établissement.
 - Informations légales, contacts et logo.
 - Sites ou campus si l’offre le permet.
-- Années scolaires, périodes, niveaux, classes et matières.
+- Années scolaires, périodes, classes et matières.
 - Calendrier scolaire et jours non ouvrés.
-- Emplois du temps quotidiens et hebdomadaires par classe, avec modèles facultatifs par niveau.
+- Emplois du temps quotidiens et hebdomadaires par classe, avec modèles réutilisables.
 - Gestion des utilisateurs, invitations, rôles et désactivation d’accès.
 
-Un emploi du temps regroupe des créneaux récurrents associés à une classe, une matière, un enseignant, une salle, un jour de la semaine et des heures de début et de fin. Il est consultable à la journée ou à la semaine. Un modèle défini pour un niveau peut être appliqué aux classes correspondantes puis ajusté classe par classe. L’application refuse les chevauchements pour une même classe, un même enseignant ou une même salle. Les jours non ouvrés du calendrier scolaire sont pris en compte. Ces emplois du temps récurrents sont distincts des séances ponctuelles de cours à distance.
+Un emploi du temps regroupe des créneaux récurrents associés à une classe, une matière, un enseignant, une salle, un jour de la semaine et des heures de début et de fin. Il est consultable à la journée ou à la semaine. Un modèle réutilisable peut être appliqué à une classe puis ajusté. L’application refuse les chevauchements pour une même classe, un même enseignant ou une même salle. Les jours non ouvrés du calendrier scolaire sont pris en compte. Ces emplois du temps récurrents sont distincts des séances ponctuelles de cours à distance.
 
 ### 4.2 Élèves, parents et inscriptions
 
 - Fiche élève avec numéro interne généré automatiquement et informations utiles à l’établissement. Le numéro est unique et immuable.
 - Un ou plusieurs parents/tuteurs par élève.
 - Un parent/tuteur peut être lié à plusieurs enfants.
-- Inscription à une année, un niveau et une classe.
+- Inscription à une année et une classe.
 - Historique des inscriptions et changements de classe.
 - Statut du dossier : préinscrit, actif, transféré, sorti ou archivé.
 - Import initial de données depuis un fichier tabulaire et export autorisé.
@@ -113,7 +113,7 @@ Un emploi du temps regroupe des créneaux récurrents associés à une classe, u
 ### 4.3 Frais scolaires et encaissements
 
 - Catalogue de types de frais configurable par établissement; chaque frais est associé à un type actif.
-- Définition des frais par année, niveau ou élève.
+- Définition des frais par année, classe ou élève.
 - Échéances, remises et ajustements autorisés.
 - Enregistrement des paiements et paiements partiels.
 - Modes de paiement configurables par l’école, avec libellés modifiables et désactivation logique sans effacer l’historique.
@@ -160,7 +160,7 @@ Le modèle prévoit les matières, évaluations, notes, coefficients, périodes 
 
 ### 4.8 Tableaux de bord et rapports
 
-- Effectifs par année, niveau et classe.
+- Effectifs par année et classe.
 - Suivi des inscriptions.
 - Présences et absences.
 - Frais facturés, paiements reçus et soldes dus.
@@ -211,7 +211,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 ### Inclus dans le MVP
 
 1. Création d’un établissement et configuration de base.
-2. Gestion d’une année scolaire, des niveaux, classes et utilisateurs.
+2. Gestion d’une année scolaire, des classes et des utilisateurs.
 3. Gestion des élèves, parents/tuteurs et inscriptions, actives dès leur création indépendamment du paiement.
 4. Paramétrage de la devise, des types de frais, des frais scolaires et des modes de paiement.
 5. Enregistrement des paiements scolaires, reçus et soldes impayés.
@@ -222,7 +222,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 10. Tableau de bord simple et export des données principales.
 11. Gestion des rôles, isolation des données entre écoles, journal d’audit des actions sensibles.
 12. Paramètres de référence et création d’un établissement avec invitation de son administrateur par `ADMIN`.
-13. Emplois du temps hebdomadaires par classe, avec modèles par niveau, vues quotidiennes/hebdomadaires et détection des conflits.
+13. Emplois du temps hebdomadaires par classe, avec modèles réutilisables, vues quotidiennes/hebdomadaires et détection des conflits.
 
 ### Hors MVP / phases ultérieures
 
@@ -243,7 +243,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 - Le comptable peut enregistrer un paiement partiel et le solde dû est recalculé correctement.
 - Un reçu peut être retrouvé et exporté sans modifier l’historique du paiement.
 - Un enseignant peut enregistrer l’appel d’une classe et le parent autorisé voit l’information.
-- L’administrateur peut définir un modèle d’emploi du temps pour un niveau, l’appliquer à une classe et consulter son planning hebdomadaire; un créneau incompatible avec la classe, l’enseignant ou la salle est refusé.
+- L’administrateur peut appliquer un modèle d’emploi du temps à une classe et consulter son planning hebdomadaire; un créneau incompatible avec la classe, l’enseignant ou la salle est refusé.
 - Un enseignant peut programmer un cours à distance ; seuls les utilisateurs autorisés voient son lien et ses ressources.
 - L’opérateur peut activer, suspendre ou faire expirer un abonnement et consulter les quotas appliqués.
 - Les paramètres locaux sont contrôlés par les valeurs et règles permises par la plateforme.
@@ -319,7 +319,7 @@ Organisation proposée par domaines fonctionnels, à ajuster à mesure que le co
     ├── config          # configuration de l'application
     ├── security        # identité, autorisations, contexte du tenant
     ├── school          # établissements, campus, réglages
-    ├── academic        # années, périodes, niveaux, classes, matières
+    ├── academic        # années, périodes, classes, matières
     ├── identity        # utilisateurs, membres, rôles
     ├── student         # élèves, parents et liens familiaux
     ├── enrollment      # inscriptions et historique scolaire
@@ -332,6 +332,8 @@ Organisation proposée par domaines fonctionnels, à ajuster à mesure que le co
     └── audit           # historique des opérations sensibles
 
 Chaque domaine peut contenir ses propres api/controller, application/service, domain et infrastructure/repository. Les contrôleurs exposent des DTO plutôt que les entités JPA. Les règles métier ne doivent pas dépendre directement d’un fournisseur de paiement ou de visioconférence.
+
+Dans le backend actuel, les modules sont sous `com.galactique.gestionecole` et suivent ces frontières. Le portail parent expose des informations de l’enfant après vérification du lien actif; `learning` gère les leçons/devoirs publiés et leurs pièces jointes en stockage privé; `licenses` gère les offres, périodes, suspensions et entitlements par établissement. V30 préserve l’accès des établissements existants avec une licence legacy sans échéance. Tout nouvel établissement nécessite une attribution explicite; aucun prix, quota ou essai n’est défini par défaut. Le contrat HTTP détaillé est maintenu dans `doc-api.md` et `swagger.yaml`.
 
 ### 7.5 Modèle de données de départ
 

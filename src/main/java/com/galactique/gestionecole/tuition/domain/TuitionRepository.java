@@ -14,10 +14,15 @@ public interface TuitionRepository {
 	boolean existsCharge(UUID feeId, UUID studentId);
 	StudentFeeCharge saveCharge(TuitionFee fee, Student student);
 	List<StudentFeeCharge> findChargesForStudent(UUID establishmentId, UUID studentId);
+	List<StudentFeeCharge> findChargesForStudentAndYear(UUID establishmentId, UUID studentId, UUID academicYearId);
 	List<StudentFeeCharge> findChargesForYear(UUID establishmentId, UUID academicYearId);
+	Optional<StudentFeeCharge> findCharge(UUID chargeId, UUID establishmentId, UUID studentId, UUID academicYearId);
 	Optional<StudentFeeCharge> findChargeForUpdate(UUID chargeId, UUID establishmentId, UUID studentId);
 	BigDecimal sumPayments(UUID chargeId);
 	List<TuitionPayment> findPayments(UUID chargeId);
+	List<TuitionPayment> findPaymentsForCharges(List<UUID> chargeIds);
+	List<TuitionPayment> findPaymentsForChargeBetween(UUID chargeId, UUID establishmentId, UUID studentId,
+		java.time.Instant from, java.time.Instant to);
 	Optional<TuitionPayment> findPayment(UUID paymentId, UUID establishmentId);
 	TuitionPayment savePayment(StudentFeeCharge charge, String receiptNumber, BigDecimal amount,
 		String paymentMethodCode, String paymentMethodName, String reference, String recordedBy);

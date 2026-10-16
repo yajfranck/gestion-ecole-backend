@@ -20,6 +20,8 @@ import com.galactique.gestionecole.students.application.StudentNotFoundException
 import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.enrollments.domain.Enrollment;
 import com.galactique.gestionecole.enrollments.domain.EnrollmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class EnrollmentApplicationService {
@@ -28,17 +30,20 @@ public class EnrollmentApplicationService {
 	private final SchoolCalendarApplicationService schoolCalendarApplicationService;
 	private final SchoolCatalogApplicationService schoolCatalogApplicationService;
 	private final EnrollmentFeeChargeGateway enrollmentFeeChargeGateway;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public EnrollmentApplicationService(EnrollmentRepository enrollmentRepository,
 		StudentApplicationService studentApplicationService,
 		SchoolCalendarApplicationService schoolCalendarApplicationService,
 		SchoolCatalogApplicationService schoolCatalogApplicationService,
-		EnrollmentFeeChargeGateway enrollmentFeeChargeGateway) {
+		EnrollmentFeeChargeGateway enrollmentFeeChargeGateway,
+		LicenseApplicationService licenseApplicationService) {
 		this.enrollmentRepository = enrollmentRepository;
 		this.studentApplicationService = studentApplicationService;
 		this.schoolCalendarApplicationService = schoolCalendarApplicationService;
 		this.schoolCatalogApplicationService = schoolCatalogApplicationService;
 		this.enrollmentFeeChargeGateway = enrollmentFeeChargeGateway;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional(readOnly = true)
@@ -75,6 +80,42 @@ public class EnrollmentApplicationService {
 		return List.copyOf(students);
 	}
 
+	@Transactional(readOnly = true)
+	public List<Enrollment> findEnrollmentsByClass(UUID establishmentId, UUID academicYearId,
+		UUID schoolClassId, EmployeeActor actor) {
+		validateAcademicYear(establishmentId, academicYearId, actor);
+		try {
+			schoolCatalogApplicationService.findClass(establishmentId, academicYearId, schoolClassId, actor);
+		} catch (SchoolCatalogNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (SchoolCatalogAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
+		}
+		return enrollmentRepository.findAllByEstablishmentIdAndAcademicYearIdAndSchoolClassId(
+			establishmentId, academicYearId, schoolClassId);
+	}
+
+	@Transactional(readOnly = true)
+	public Enrollment findEnrollmentForAttendanceHistory(UUID establishmentId, UUID academicYearId,
+		UUID studentId, EmployeeActor actor) {
+		try {
+			schoolCalendarApplicationService.findYearForAttendanceHistory(establishmentId, academicYearId, actor);
+			studentApplicationService.findIncludingArchived(establishmentId, studentId, actor);
+			return enrollmentRepository.findByEstablishmentIdAndAcademicYearIdAndStudentId(
+				establishmentId, academicYearId, studentId).orElseThrow(EnrollmentNotFoundException::new);
+		} catch (AcademicCalendarNotFoundException | StudentNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (AcademicCalendarAccessDeniedException | StudentAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
+		}
+	}
+
+	@Transactional(readOnly = true)
+	public Enrollment findEnrollmentForGuardian(UUID establishmentId, UUID academicYearId, UUID studentId) {
+		return enrollmentRepository.findByEstablishmentIdAndAcademicYearIdAndStudentId(
+			establishmentId, academicYearId, studentId).orElseThrow(EnrollmentNotFoundException::new);
+	}
+
 	@Transactional
 	public Enrollment create(UUID establishmentId, UUID academicYearId, CreateEnrollmentCommand command,
 		EmployeeActor actor) {
@@ -102,6 +143,10 @@ public class EnrollmentApplicationService {
 	}
 
 	private void validateAcademicYear(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
+		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
+			java.time.Instant.now())) {
+			throw new EnrollmentAccessDeniedException();
+		}
 		try {
 			schoolCalendarApplicationService.findYear(establishmentId, academicYearId, actor);
 		} catch (AcademicCalendarNotFoundException exception) {

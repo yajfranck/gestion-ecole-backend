@@ -16,5 +16,9 @@ public interface StudentJpaRepository extends JpaRepository<StudentEntity, UUID>
 	List<StudentEntity> findAllByEstablishmentIdAndEnabledTrueOrderByLastNameAscFirstNameAscStudentNumberAsc(
 		UUID establishmentId);
 
+	List<StudentEntity> findAllByEstablishmentIdAndIdInAndEnabledTrue(UUID establishmentId, List<UUID> ids);
+
 	Optional<StudentEntity> findByIdAndEstablishmentIdAndEnabledTrue(UUID id, UUID establishmentId);
+
+	Optional<StudentEntity> findByIdAndEstablishmentId(UUID id, UUID establishmentId);
 }

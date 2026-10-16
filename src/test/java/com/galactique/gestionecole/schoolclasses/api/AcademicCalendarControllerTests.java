@@ -20,6 +20,8 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
@@ -28,11 +30,14 @@ import com.jayway.jsonpath.JsonPath;
 class AcademicCalendarControllerTests {
 	private final MockMvc mockMvc;
 	private final EstablishmentRepository establishmentRepository;
+	private final LicenseApplicationService licenseApplicationService;
 
 	@Autowired
-	AcademicCalendarControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository) {
+	AcademicCalendarControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
+		LicenseApplicationService licenseApplicationService) {
 		this.mockMvc = mockMvc;
 		this.establishmentRepository = establishmentRepository;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Test
@@ -127,7 +132,8 @@ class AcademicCalendarControllerTests {
 
 	private Establishment createEstablishment() {
 		String code = "CAL-" + UUID.randomUUID().toString().substring(0, 8);
-		return establishmentRepository.save(code, "Calendar Test School");
+		return LicensedEstablishmentFixture.create(establishmentRepository, licenseApplicationService,
+			code, "Calendar Test School");
 	}
 
 	private static String yearUrl(UUID establishmentId) {

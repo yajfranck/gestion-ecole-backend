@@ -23,6 +23,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
@@ -31,23 +33,28 @@ import com.jayway.jsonpath.JsonPath;
 class TuitionControllerTests {
 	private final MockMvc mockMvc;
 	private final EstablishmentRepository establishmentRepository;
+	private final LicenseApplicationService licenseApplicationService;
 
 	@Autowired
-	TuitionControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository) {
+	TuitionControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
+		LicenseApplicationService licenseApplicationService) {
 		this.mockMvc = mockMvc;
 		this.establishmentRepository = establishmentRepository;
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Test
 	void appliesFeesCollectsPartialPaymentsAndRetainsReceiptsAndBalances() throws Exception {
-		Establishment establishment = establishmentRepository.save(
-			"TUI-" + UUID.randomUUID().toString().substring(0, 8), "Tuition Test School");
+		Establishment establishment = LicensedEstablishmentFixture.create(establishmentRepository,
+			licenseApplicationService, "TUI-" + UUID.randomUUID().toString().substring(0, 8), "Tuition Test School");
 		String base = "/api/v1/establishments/" + establishment.id();
 		String studentId = createStudent(base);
-		String gradeLevelId = createGradeLevel(base);
+		String otherStudentId = createStudent(base);
 		String academicYearId = createAcademicYear(base);
-		String schoolClassId = createClass(base, academicYearId, gradeLevelId);
+		String schoolClassId = createClass(base, academicYearId, "P1-A");
+		String otherClassId = createClass(base, academicYearId, "P1-B");
 		createEnrollment(base, academicYearId, studentId, schoolClassId);
+		createEnrollment(base, academicYearId, otherStudentId, otherClassId);
 
 		mockMvc.perform(put(base + "/payment-methods")
 			.with(admin("can_payment_method_update"))
@@ -70,11 +77,12 @@ class TuitionControllerTests {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"name\":\"Tuition\",\"amount\":100.00,\"currency\":\"USD\","
 				+ "\"feeTypeId\":\"" + feeTypeId + "\","
-				+ "\"dueDate\":\"2026-01-31\",\"gradeLevelId\":\"" + gradeLevelId + "\"}"))
+				+ "\"dueDate\":\"2026-01-31\",\"schoolClassId\":\"" + schoolClassId + "\"}"))
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.chargesCreated").value(1))
 			.andReturn();
 		String feeId = JsonPath.read(feeResult.getResponse().getContentAsString(), "$.fee.id");
+		assertClassFeeScope(feeResult, base, schoolClassId, otherStudentId);
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
 			base + "/tuition-fee-types/" + feeTypeId)
 			.with(admin("can_tuition_fee_type_update"))
@@ -161,8 +169,8 @@ class TuitionControllerTests {
 
 	@Test
 	void staffWithoutTuitionPermissionsCannotReadFees() throws Exception {
-		Establishment establishment = establishmentRepository.save(
-			"TUP-" + UUID.randomUUID().toString().substring(0, 8), "Tuition Permission School");
+		Establishment establishment = LicensedEstablishmentFixture.create(establishmentRepository,
+			licenseApplicationService, "TUP-" + UUID.randomUUID().toString().substring(0, 8), "Tuition Permission School");
 		mockMvc.perform(get("/api/v1/establishments/" + establishment.id()
 			+ "/school-years/" + UUID.randomUUID() + "/tuition-fees")
 			.with(user("teacher@example.org").authorities(new SimpleGrantedAuthority("STAFF_ACCESS"))))
@@ -178,13 +186,15 @@ class TuitionControllerTests {
 		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}
 
-	private String createGradeLevel(String establishmentUrl) throws Exception {
-		MvcResult result = mockMvc.perform(post(establishmentUrl + "/grade-levels")
-			.with(admin("can_grade_level_create"))
-			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"P1\",\"name\":\"Primary 1\",\"displayOrder\":1}"))
-			.andExpect(status().isCreated()).andReturn();
-		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+	private void assertClassFeeScope(MvcResult feeResult, String establishmentUrl,
+		String schoolClassId, String otherStudentId) throws Exception {
+		String response = feeResult.getResponse().getContentAsString();
+		org.junit.jupiter.api.Assertions.assertEquals("SCHOOL_CLASS", JsonPath.read(response, "$.fee.scope"));
+		org.junit.jupiter.api.Assertions.assertEquals(schoolClassId, JsonPath.read(response, "$.fee.schoolClassId"));
+		mockMvc.perform(get(establishmentUrl + "/students/" + otherStudentId + "/tuition-fees")
+			.with(admin("can_tuition_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(0)));
 	}
 
 	private String createFeeType(String establishmentUrl) throws Exception {
@@ -206,12 +216,11 @@ class TuitionControllerTests {
 		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}
 
-	private String createClass(String establishmentUrl, String yearId, String gradeLevelId) throws Exception {
+	private String createClass(String establishmentUrl, String yearId, String code) throws Exception {
 		MvcResult result = mockMvc.perform(post(establishmentUrl + "/school-years/" + yearId + "/classes")
 			.with(admin("can_school_class_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"gradeLevelId\":\"" + gradeLevelId
-				+ "\",\"code\":\"P1-A\",\"name\":\"Primary 1 A\"}"))
+			.content("{\"code\":\"" + code + "\",\"name\":\"Class " + code + "\"}"))
 			.andExpect(status().isCreated()).andReturn();
 		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}

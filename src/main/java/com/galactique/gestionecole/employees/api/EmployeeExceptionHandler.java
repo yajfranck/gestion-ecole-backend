@@ -9,6 +9,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.galactique.gestionecole.establishments.application.EstablishmentNotFoundException;
+import com.galactique.gestionecole.establishments.application.EstablishmentConflictException;
 import com.galactique.gestionecole.employees.application.InvalidEmployeeRolesException;
 import com.galactique.gestionecole.employees.application.InvalidEmployeeInvitationException;
 import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedException;
@@ -34,6 +35,11 @@ public class EmployeeExceptionHandler {
 	@ExceptionHandler(EmployeeConflictException.class)
 	ResponseEntity<ProblemDetail> handleConflict() {
 		return problem(HttpStatus.CONFLICT, "Employee email or employee number already exists");
+	}
+
+	@ExceptionHandler(EstablishmentConflictException.class)
+	ResponseEntity<ProblemDetail> handleEstablishmentConflict() {
+		return problem(HttpStatus.CONFLICT, "Establishment code already exists");
 	}
 
 	@ExceptionHandler(InvalidEmployeeRolesException.class)

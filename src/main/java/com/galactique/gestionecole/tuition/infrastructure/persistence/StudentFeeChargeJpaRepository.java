@@ -13,7 +13,11 @@ import jakarta.persistence.LockModeType;
 public interface StudentFeeChargeJpaRepository extends JpaRepository<StudentFeeChargeEntity, UUID> {
 	boolean existsByFeeIdAndStudentId(UUID feeId, UUID studentId);
 	List<StudentFeeChargeEntity> findAllByEstablishmentIdAndStudentIdOrderByDueDateAsc(UUID establishmentId, UUID studentId);
+	List<StudentFeeChargeEntity> findAllByEstablishmentIdAndStudentIdAndAcademicYearIdOrderByDueDateAsc(
+		UUID establishmentId, UUID studentId, UUID academicYearId);
 	List<StudentFeeChargeEntity> findAllByEstablishmentIdAndAcademicYearIdOrderByDueDateAsc(UUID establishmentId, UUID academicYearId);
+	Optional<StudentFeeChargeEntity> findByIdAndEstablishmentIdAndStudentIdAndAcademicYearId(
+		UUID id, UUID establishmentId, UUID studentId, UUID academicYearId);
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select charge from StudentFeeChargeEntity charge where charge.id = :chargeId "

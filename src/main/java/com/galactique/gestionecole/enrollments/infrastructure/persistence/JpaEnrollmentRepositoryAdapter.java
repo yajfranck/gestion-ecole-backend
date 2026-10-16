@@ -37,4 +37,20 @@ public class JpaEnrollmentRepositoryAdapter implements EnrollmentRepository {
 		return jpaRepository.findAllByEstablishmentIdAndAcademicYearIdOrderByCreatedAtAsc(
 			establishmentId, academicYearId).stream().map(EnrollmentEntity::toDomain).toList();
 	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<Enrollment> findAllByEstablishmentIdAndAcademicYearIdAndSchoolClassId(
+		UUID establishmentId, UUID academicYearId, UUID schoolClassId) {
+		return jpaRepository.findAllByEstablishmentIdAndAcademicYearIdAndSchoolClassIdOrderByCreatedAtAsc(
+			establishmentId, academicYearId, schoolClassId).stream().map(EnrollmentEntity::toDomain).toList();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public java.util.Optional<Enrollment> findByEstablishmentIdAndAcademicYearIdAndStudentId(
+		UUID establishmentId, UUID academicYearId, UUID studentId) {
+		return jpaRepository.findByEstablishmentIdAndAcademicYearIdAndStudentId(
+			establishmentId, academicYearId, studentId).map(EnrollmentEntity::toDomain);
+	}
 }

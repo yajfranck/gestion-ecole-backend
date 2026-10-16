@@ -244,6 +244,16 @@ Crée un établissement et invite son premier administrateur d’école dans une
 
 Réponse `201 Created` avec l’établissement et `administratorInvitation` (`employeeId`, `status: "INVITATION_SENT"`). Le premier administrateur reçoit une invitation pour définir son mot de passe. Un code d’établissement, matricule ou email déjà utilisé renvoie `409 Conflict`; un échec SMTP renvoie `503 Service Unavailable`.
 
+### `PATCH /api/v1/establishments/{establishmentId}`
+
+Autorisé au rôle global `ADMIN` ou avec `can_establishment_update`. Pour un administrateur local, le service vérifie aussi que le compte employé est actif, que son rôle effectif `ESTABLISHMENT_ADMIN` est présent (directement ou hérité du poste) et qu’il appartient à l’établissement visé. `can_establishment_read` n’accorde pas cette modification.
+
+```json
+{"name":"École Exemple"}
+```
+
+`code` et `name` sont optionnels individuellement : un champ absent reste inchangé. `null`, vide ou blanc est refusé. Le code est nettoyé, converti en majuscules et limité à 40 caractères; le nom est nettoyé et limité à 200 caractères. La réponse `200 OK` est un `EstablishmentResponse`; `id`, `enabled` et `createdAt` ne changent pas, `updatedAt` est actualisé. Référence absente ou désactivée : `404`; identité locale hors établissement ou rôle effectif incorrect : `403`; entrée invalide : `400`; code déjà utilisé (y compris collision concurrente) : `409`.
+
 ### `DELETE /api/v1/establishments/{establishmentId}`
 
 Désactive logiquement un établissement. Toutes ses fiches de personnel et leurs comptes sont également désactivés, et leurs refresh tokens sont révoqués. Cette opération exige `ADMIN_ACCESS`; le rôle `ADMIN` d’onboarding ne la possède pas.
@@ -312,17 +322,7 @@ Requiert `can_academic_period_delete`. Archive la période sans supprimer l’hi
 
 ## Catalogue scolaire
 
-Les niveaux et matières sont propres à un établissement. Les codes et noms de niveau, ainsi que les codes matière, sont uniques dans l’établissement. Une classe appartient à une année scolaire active et à un niveau du même établissement. Son code est unique dans l’année et son nom dans le niveau. Une matière peut être associée à plusieurs classes; une paire classe-matière ne peut être affectée qu’une seule fois. Les enseignants et emplois du temps ne font pas partie de ce lot.
-
-### Niveaux
-
-- `GET /api/v1/establishments/{establishmentId}/grade-levels` — permission `can_grade_level_read`; liste triée par ordre d’affichage puis nom.
-- `GET /api/v1/establishments/{establishmentId}/grade-levels/{gradeLevelId}` — `can_grade_level_read`; fiche du niveau.
-- `POST /api/v1/establishments/{establishmentId}/grade-levels` — `can_grade_level_create`; crée avec `code`, `name`, `displayOrder`.
-- `PATCH /api/v1/establishments/{establishmentId}/grade-levels/{gradeLevelId}` — `can_grade_level_update`; modifie code, nom ou ordre.
-- `DELETE /api/v1/establishments/{establishmentId}/grade-levels/{gradeLevelId}` — `can_grade_level_delete`; archive, refus `409` si une classe active le référence.
-
-Exemple de création : `{"code":"P1","name":"Primary 1","displayOrder":1}`. Codes normalisés en majuscules; code ou nom déjà utilisé dans l’établissement : `409`.
+Les matières sont propres à un établissement et leur code est unique dans cet établissement. Une classe appartient directement à une année scolaire active; son code est unique dans l’année. Une matière peut être associée à plusieurs classes; une paire classe-matière ne peut être affectée qu’une seule fois. Les enseignants et emplois du temps ne font pas partie de ce lot.
 
 ### Matières
 
@@ -338,11 +338,11 @@ Exemple : `{"code":"MATH","name":"Mathematics"}`. Code déjà utilisé dans l’
 
 - `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — permission `can_school_class_read`; liste les classes actives de l’année.
 - `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_read`; fiche de classe.
-- `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — `can_school_class_create`; crée avec `gradeLevelId`, `code`, `name`.
-- `PATCH /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_update`; modifie niveau, code ou nom.
+- `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — `can_school_class_create`; crée avec `code`, `name`.
+- `PATCH /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_update`; modifie code ou nom.
 - `DELETE /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_delete`; archive la classe.
 
-Exemple : `{"gradeLevelId":"<uuid>","code":"P1-A","name":"Primary 1 A"}`. Le niveau doit appartenir au même établissement. Code dupliqué dans l’année ou nom dupliqué pour le même niveau/année : `409`.
+Exemple : `{"code":"P1-A","name":"Primary 1 A"}`. L’année doit appartenir au même établissement. Code déjà utilisé dans l’année : `409`.
 
 ### Affectations classe-matière
 
@@ -377,9 +377,75 @@ Réponse `201 Created` avec `id`, `establishmentId`, `studentId`, `academicYearI
 
 Requiert `can_enrollment_read`. Retourne les élèves actifs inscrits dans cette classe pour l’année indiquée, triés par nom, prénom et numéro. Une classe absente ou hors périmètre renvoie `404`.
 
+## Présences quotidiennes
+
+Un pointage est journalier et rattaché à l’inscription, sans granularité par cours ou demi-journée. `can_attendance_read` permet la lecture; `can_attendance_write` permet la saisie et la correction. Ces permissions sont attribuées par défaut à `ESTABLISHMENT_ADMIN` et sont assignables au personnel via les rôles et les postes. Le compte doit être actif et rattaché à l’établissement; les permissions du rôle global `ADMIN` ne donnent pas accès aux présences. Aucun accès parent n’est exposé.
+
+Les états enregistrés sont `PRESENT` et `ABSENT`. L’état `NON_RENSEIGNE` est calculé pour un élève sans ligne de pointage et ne peut pas être transmis à l’API. Aucun calendrier de jours ouvrés ou fériés n’est appliqué. La date doit seulement être comprise dans les bornes de l’année scolaire.
+
+### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance?date=YYYY-MM-DD`
+
+Requiert `can_attendance_read`. Retourne une ligne par élève actif inscrit dans la classe et les totaux présents, absents et non renseignés.
+
+```json
+{
+	"establishmentId": "<uuid-etablissement>",
+	"academicYearId": "<uuid-annee>",
+	"schoolClassId": "<uuid-classe>",
+	"date": "2026-02-12",
+	"presentCount": 1,
+	"absentCount": 1,
+	"unreportedCount": 0,
+	"entries": [
+		{"studentId":"<uuid-eleve-1>","studentNumber":"STU-00000001","firstName":"Ada","lastName":"Lovelace","status":"PRESENT","absenceJustified":false,"comment":null,"createdBy":"teacher@example.org","updatedBy":"teacher@example.org","createdAt":"2026-02-12T08:05:00Z","updatedAt":"2026-02-12T08:05:00Z"},
+		{"studentId":"<uuid-eleve-2>","studentNumber":"STU-00000002","firstName":"Grace","lastName":"Hopper","status":"ABSENT","absenceJustified":true,"comment":"Maladie signalée","createdBy":"teacher@example.org","updatedBy":"teacher@example.org","createdAt":"2026-02-12T08:06:00Z","updatedAt":"2026-02-12T08:06:00Z"}
+	]
+}
+```
+
+Une entrée non renseignée a `status: "NON_RENSEIGNE"`, `absenceJustified: false`, et ses champs de pointage/commentaire/audit valent `null`. Année ou classe absente/inactive/hors périmètre : `404`; date invalide ou hors année : `400`; permission absente : `403`.
+
+### `PUT /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance/{date}`
+
+Requiert `can_attendance_write`. Upsert idempotent par inscription et date : une répétition avec les mêmes valeurs ne crée pas de doublon et ne change pas les horodatages; les élèves omis restent inchangés. Pour changer une ligne existante, le client doit transmettre `expectedUpdatedAt` égal à son `updatedAt` courant; une version absente ou périmée renvoie `409 Conflict`. Une répétition strictement identique peut omettre cette version. Les corrections valides mettent à jour `updatedBy` et `updatedAt`, en conservant `createdBy` et `createdAt`. Les entrées identiques répétées dans le même lot sont acceptées; deux entrées contradictoires pour le même élève rejettent tout le lot. Le lot entier est validé avant écriture et exécuté dans une transaction.
+
+```json
+{
+	"entries": [
+		{"studentId":"<uuid-eleve-1>","status":"PRESENT"},
+		{"studentId":"<uuid-eleve-2>","status":"ABSENT","absenceJustified":true,"comment":"Maladie signalée"}
+	]
+}
+```
+
+Pour corriger ultérieurement cette absence, transmettre la version `updatedAt` retournée par la feuille : `{"entries":[{"studentId":"<uuid-eleve-2>","status":"PRESENT","expectedUpdatedAt":"2026-02-12T08:06:00Z"}]}`. Une répétition sans changement peut réutiliser l’entrée sans version; toute correction différente exige la version courante.
+
+`absenceJustified` est facultatif, vaut `false` par défaut et ne peut être vrai que pour `ABSENT`. Le commentaire est facultatif et limité à 500 caractères. La réponse `200 OK` retourne la feuille recalculée. Lot vide, élève non inscrit dans cette classe/année, doublons contradictoires, date invalide ou justification incohérente : `400`; contexte absent/inactif/hors périmètre : `404`; écriture concurrente incompatible : `409`; l’écriture partielle du lot est annulée.
+
+### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD`
+
+Requiert `can_attendance_read`. Les bornes sont inclusives, ordonnées, situées dans l’année et limitées à 366 jours. `records` ne contient que les jours réellement pointés; une journée sans pointage n’est jamais convertie en présence ou absence. L’historique demeure accessible après archivage de l’élève ou de sa classe, tant que le compte appelant est actif et rattaché à l’établissement.
+
+```json
+{
+	"establishmentId":"<uuid-etablissement>",
+	"academicYearId":"<uuid-annee>",
+	"studentId":"<uuid-eleve>",
+	"from":"2026-02-01",
+	"to":"2026-02-28",
+	"records":[
+		{"date":"2026-02-12","status":"ABSENT","absenceJustified":true,"comment":"Maladie signalée","createdBy":"teacher@example.org","updatedBy":"teacher@example.org","createdAt":"2026-02-12T08:05:00Z","updatedAt":"2026-02-12T08:05:00Z"}
+	]
+}
+```
+
+Élève sans inscription dans l’année, établissement ou année absents : `404`; plage invalide, hors année ou supérieure à 366 jours : `400`; permission absente ou établissement hors périmètre : `403`.
+
 ## Frais et paiements scolaires
 
-Les types de frais sont configurés par établissement et désactivables sans supprimer les frais historiques. Chaque nouvelle définition de frais doit référencer un type actif (`feeTypeId`); le code et le nom du type sont copiés dans la définition pour préserver l’historique. Les frais sont définis dans le périmètre d’une année scolaire, avec une portée facultative par niveau ou par élève. Un frais sans `gradeLevelId` ni `studentId` s’applique à toute l’année. Sa création crée immédiatement une créance pour chaque élève actuellement inscrit qui correspond à la portée. Une créance conserve une copie du montant, de la devise, de l’échéance et des informations de l’élève; le frais d’origine n’est pas modifiable par l’API. Après de nouvelles inscriptions, `POST .../apply` applique de nouveau le frais sans créer de doublons.
+Les types de frais sont configurés par établissement et désactivables sans supprimer les frais historiques. Chaque nouvelle définition de frais doit référencer un type actif (`feeTypeId`); le code et le nom du type sont copiés dans la définition pour préserver l’historique. Les frais sont définis dans le périmètre d’une année scolaire, avec une portée facultative par classe ou par élève. Un frais sans `schoolClassId` ni `studentId` s’applique à toute l’année. Sa création crée immédiatement une créance pour chaque élève actuellement inscrit qui correspond à la portée. Une créance conserve une copie du montant, de la devise, de l’échéance et des informations de l’élève; le frais d’origine n’est pas modifiable par l’API. Après de nouvelles inscriptions, `POST .../apply` applique de nouveau le frais sans créer de doublons.
+
+La migration vers ce modèle désactive les anciennes définitions ciblées par niveau afin de ne pas les convertir en frais globaux. Les créances et paiements déjà enregistrés sont conservés.
 
 Les montants sont positifs, au plus deux décimales, et la devise est un code de trois lettres. Les paiements sont enregistrés manuellement, immuables et associés à une seule créance. Le solde est recalculé depuis l’historique; un paiement supérieur au solde est refusé. Les permissions financières sont attribuées au rôle `ESTABLISHMENT_ADMIN`.
 
@@ -438,7 +504,7 @@ Requiert `can_tuition_read`. Retourne les définitions de frais de l’année sc
 
 ### `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees`
 
-Requiert `can_tuition_create`. Crée un frais et ses créances pour les élèves inscrits correspondants. `gradeLevelId` et `studentId` sont facultatifs mais ne peuvent pas être fournis ensemble; sans les deux, le frais concerne toute l’année.
+Requiert `can_tuition_create`. Crée un frais et ses créances pour les élèves inscrits correspondants. `schoolClassId` et `studentId` sont facultatifs mais ne peuvent pas être fournis ensemble; sans les deux, le frais concerne toute l’année.
 
 ```json
 {
@@ -447,11 +513,11 @@ Requiert `can_tuition_create`. Crée un frais et ses créances pour les élèves
 	"amount": 125000,
 	"currency": "XOF",
 	"dueDate": "2026-10-31",
-	"gradeLevelId": "<uuid-niveau>"
+	"schoolClassId": "<uuid-classe>"
 }
 ```
 
-Réponse `201 Created` avec `fee` (incluant `feeTypeId`, `feeTypeCode` et `feeTypeName`) et `chargesCreated`. L’échéance doit être comprise dans l’année scolaire. Type, niveau, élève ou année absents/hors périmètre : `404`; nom déjà utilisé dans l’année : `409`; montant ou portée invalide : `400`.
+Réponse `201 Created` avec `fee` (incluant `feeTypeId`, `feeTypeCode` et `feeTypeName`) et `chargesCreated`. L’échéance doit être comprise dans l’année scolaire. Type, classe, élève ou année absents/hors périmètre : `404`; nom déjà utilisé dans l’année : `409`; montant ou portée invalide : `400`.
 
 ### `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/{feeId}/apply`
 
@@ -624,6 +690,60 @@ Requiert la permission `can_guardian_read_children`, attribuée au rôle `PARENT
 ```
 
 Un utilisateur authentifié sans la permission reçoit `403 Forbidden`.
+
+### Portail parent par enfant
+
+Toutes les routes ci-dessous requièrent `can_guardian_read_children`. Chaque requête vérifie que le compte authentifié a toujours un lien actif avec l’élève, que l’élève et l’établissement sont actifs et que l’inscription correspond à l’année demandée. Le portail exige une licence active avec `PARENT_PORTAL`; les appels financiers requièrent également `TUITION` et les présences `ATTENDANCE`. Les montants sont totalisés séparément par devise.
+
+- `GET /api/v1/guardians/me/children/{studentId}/summary?academicYearId={uuid}` — identité scolaire, établissement, année, classe et soldes par devise (`amountBilled`, `amountPaid`, `balance`).
+- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees` — créances de l’enfant pour l’année avec paiements et soldes, sans identité ou audit interne.
+- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees/{chargeId}/payments?from=YYYY-MM-DD&to=YYYY-MM-DD` — paiements d’une créance; dates inclusives, plage limitée à 366 jours.
+- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` — pointages d’inscriptions, plage inclusive maximale de 366 jours.
+
+Les réponses de présence exposent seulement `parentComment` comme commentaire destiné à la famille. Le commentaire interne, `createdBy` et `updatedBy` ne sont jamais retournés. Une relation absente, inactive ou hors périmètre renvoie `404`; permission/licence refusée `403`; période invalide `400`.
+
+## Contenus pédagogiques et pièces jointes
+
+Les contenus appartiennent à une classe d’une année scolaire et sont de type `LESSON` ou `ASSIGNMENT`. Leur état suit `DRAFT -> PUBLISHED -> ARCHIVED`; seule une ressource publiée est consultable par un parent. Les matières sont facultatives, mais doivent être affectées à la classe. Les leçons n’acceptent pas de date limite. Le personnel doit disposer des permissions `can_learning_content_read`, `can_learning_content_create`, `can_learning_content_update`, `can_learning_content_publish` ou `can_learning_content_archive` selon l’action. L’établissement doit avoir la fonctionnalité `LEARNING_CONTENT` active.
+
+Base des routes staff : `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content`.
+
+- `GET` — liste paginée; filtres facultatifs `type`, `page` (défaut 0), `size` (défaut 20, maximum 100). Requiert `can_learning_content_read`.
+- `POST` — crée un brouillon avec `type`, `title`, `description`, `body`, `subjectId` et `dueDate` facultatifs selon les règles ci-dessus. Requiert `can_learning_content_create`; réponse `201 Created`.
+- `GET /{contentId}` — détail non archivé, brouillon inclus. Requiert `can_learning_content_read`.
+- `PUT /{contentId}` — remplace les champs éditables d’un contenu non archivé; son type ne peut pas changer. Requiert `can_learning_content_update`.
+- `POST /{contentId}/publish` — publie un brouillon. Requiert `can_learning_content_publish`.
+- `POST /{contentId}/archive` — archive un contenu sans supprimer l’historique. Requiert `can_learning_content_archive`.
+- `POST /{contentId}/attachments` (`multipart/form-data`, champ `file`) — ajoute une pièce jointe uniquement à un brouillon. Requiert `can_learning_content_update`; réponse `201 Created`.
+- `GET /{contentId}/attachments` — liste les métadonnées sans clé de stockage. Requiert `can_learning_content_read`.
+- `GET /{contentId}/attachments/{attachmentId}` — téléchargement privé autorisé après vérification du périmètre contenu/classe. Requiert `can_learning_content_read`.
+
+Les uploads acceptent PDF, PNG, JPG/JPEG, WEBP, TXT, DOCX et PPTX uniquement avec leur type MIME autorisé correspondant. La limite par défaut est 10 MiB (`LEARNING_MAX_FILE_SIZE_BYTES` et `spring.servlet.multipart.max-file-size`), stockée hors du webroot dans `${LEARNING_STORAGE_ROOT}` ou le dossier temporaire privé par défaut. Le serveur crée une clé UUID; aucun chemin disque n’est renvoyé. Une pièce jointe n’est pas supprimable séparément; archiver le contenu masque ses pièces jointes aux parents.
+
+Base des routes parent : `/api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content`.
+
+- `GET` — liste paginée des seuls contenus `PUBLISHED` de la classe où l’enfant est inscrit; accepte `type`, `page`, `size`.
+- `GET /{contentId}` — détail publié uniquement.
+- `GET /{contentId}/attachments` et `GET /{contentId}/attachments/{attachmentId}` — métadonnées/téléchargement des pièces jointes du contenu publié.
+
+Les routes parent réutilisent `can_guardian_read_children` et réévaluent le lien parent/enfant et l’inscription à chaque accès. Un brouillon, contenu archivé, pièce jointe liée à un autre contenu ou objet hors classe est masqué par `404`. Upload invalide, taille dépassée, média interdit ou plage de pagination invalide : `400`; transition d’état incompatible : `409`.
+
+## Licences plateforme
+
+L’établissement est le titulaire du droit d’accès, conformément au modèle SaaS du README. Aucun prix, quota ou essai n’est fixé par cette tranche. Une offre contient un ensemble de capacités (`SCHOOL_MANAGEMENT`, `STUDENT_RECORDS`, `PARENT_PORTAL`, `TUITION`, `ATTENDANCE`, `LEARNING_CONTENT`). Une licence possède une période `[validFrom, validUntil)` (fin facultative) et peut être suspendue. L’état retourné est `UPCOMING`, `ACTIVE`, `EXPIRED` ou `SUSPENDED`. Les événements d’attribution, remplacement, suspension et réactivation sont audités.
+
+La migration V30 attribue `LEGACY_FULL_ACCESS` sans échéance aux établissements déjà présents, afin de ne pas couper leurs services. Les nouveaux établissements ne reçoivent pas de licence implicite : un administrateur plateforme doit en attribuer une. Les changements de licence verrouillent la ligne établissement et refusent les chevauchements avec une licence future; une licence antérieure chevauchante est terminée au début de sa remplaçante.
+
+- `GET /api/v1/establishments/{establishmentId}/license` — `can_license_read` (ou `ROLE_ADMIN`); établissement strictement limité au périmètre autorisé.
+- `GET /api/v1/admin/license-offers` — rôle `ADMIN` uniquement; catalogue actif.
+- `POST /api/v1/admin/license-offers` — rôle `ADMIN`; crée une offre (`code`, `name`, `features`), réponse `201 Created`.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses` — rôle `ADMIN`; attribue/remplace une licence (`offerId`, `validFrom` facultatif, `validUntil` facultatif), réponse `201 Created`.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/suspend` — rôle `ADMIN`; suspend une licence active ou à venir.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/reactivate` — rôle `ADMIN`; réactive une licence suspendue non expirée.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/end` — rôle `ADMIN`; termine immédiatement une licence en cours.
+- `GET /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/events` — rôle `ADMIN`; historique d’audit.
+
+Code d’offre ou période invalide : `400`; offre/établissement/licence absent : `404`; état incompatible, offre en doublon ou chevauchement non remplaçable : `409`; rôle ou permission absente : `403`. Les contrôles d’entitlement sont appliqués côté services métier, en plus des permissions HTTP. Les routes d’authentification, de santé et d’administration de licences restent utilisables même lorsqu’une licence est suspendue/expirée.
 
 ## Personnel
 

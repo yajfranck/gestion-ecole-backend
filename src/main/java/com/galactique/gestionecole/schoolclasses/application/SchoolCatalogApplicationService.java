@@ -14,96 +14,36 @@ import com.galactique.gestionecole.employees.application.EmployeeApplicationServ
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
 import com.galactique.gestionecole.schoolclasses.domain.ClassSubjectRepository;
-import com.galactique.gestionecole.schoolclasses.domain.GradeLevel;
-import com.galactique.gestionecole.schoolclasses.domain.GradeLevelRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassSubject;
 import com.galactique.gestionecole.schoolclasses.domain.Subject;
 import com.galactique.gestionecole.schoolclasses.domain.SubjectRepository;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 
 @Service
 public class SchoolCatalogApplicationService {
-	private final GradeLevelRepository gradeLevelRepository;
 	private final SubjectRepository subjectRepository;
 	private final SchoolClassRepository schoolClassRepository;
 	private final ClassSubjectRepository classSubjectRepository;
 	private final AcademicYearRepository academicYearRepository;
 	private final EmployeeApplicationService employeeApplicationService;
+	private final LicenseApplicationService licenseApplicationService;
 
 	public SchoolCatalogApplicationService(
-		GradeLevelRepository gradeLevelRepository,
 		SubjectRepository subjectRepository,
 		SchoolClassRepository schoolClassRepository,
 		ClassSubjectRepository classSubjectRepository,
 		AcademicYearRepository academicYearRepository,
-		EmployeeApplicationService employeeApplicationService) {
-		this.gradeLevelRepository = gradeLevelRepository;
+		EmployeeApplicationService employeeApplicationService,
+		LicenseApplicationService licenseApplicationService) {
 		this.subjectRepository = subjectRepository;
 		this.schoolClassRepository = schoolClassRepository;
 		this.classSubjectRepository = classSubjectRepository;
 		this.academicYearRepository = academicYearRepository;
 		this.employeeApplicationService = employeeApplicationService;
-	}
-
-	@Transactional(readOnly = true)
-	public List<GradeLevel> findGradeLevels(UUID establishmentId, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		return gradeLevelRepository.findAllByEstablishmentId(establishmentId);
-	}
-
-	@Transactional(readOnly = true)
-	public GradeLevel findGradeLevel(UUID establishmentId, UUID gradeLevelId, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		return gradeLevelRepository.findByIdAndEstablishmentId(gradeLevelId, establishmentId)
-			.orElseThrow(SchoolCatalogNotFoundException::new);
-	}
-
-	@Transactional
-	public GradeLevel createGradeLevel(UUID establishmentId, CreateGradeLevelCommand command, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		String code = normalizeCode(command.code());
-		if (gradeLevelRepository.existsByEstablishmentIdAndCode(establishmentId, code)
-			|| gradeLevelRepository.existsByEstablishmentIdAndName(establishmentId, command.name().strip())) {
-			throw new SchoolCatalogConflictException();
-		}
-		try {
-			return gradeLevelRepository.save(establishmentId, code, command.name(), command.displayOrder());
-		} catch (DataIntegrityViolationException exception) {
-			throw new SchoolCatalogConflictException();
-		}
-	}
-
-	@Transactional
-	public GradeLevel updateGradeLevel(UUID establishmentId, UUID gradeLevelId,
-		UpdateGradeLevelCommand command, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		GradeLevel current = gradeLevelRepository.findByIdAndEstablishmentId(gradeLevelId, establishmentId)
-			.orElseThrow(SchoolCatalogNotFoundException::new);
-		String code = command.code() == null ? current.code() : normalizeCode(command.code());
-		String name = command.name() == null ? current.name() : command.name();
-		int displayOrder = command.displayOrder() == null ? current.displayOrder() : command.displayOrder();
-		if (gradeLevelRepository.existsByEstablishmentIdAndCodeAndIdNot(establishmentId, code, gradeLevelId)
-			|| gradeLevelRepository.existsByEstablishmentIdAndNameAndIdNot(
-				establishmentId, name.strip(), gradeLevelId)) {
-			throw new SchoolCatalogConflictException();
-		}
-		try {
-			return gradeLevelRepository.update(gradeLevelId, establishmentId, code, name, displayOrder);
-		} catch (DataIntegrityViolationException exception) {
-			throw new SchoolCatalogConflictException();
-		}
-	}
-
-	@Transactional
-	public void archiveGradeLevel(UUID establishmentId, UUID gradeLevelId, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		gradeLevelRepository.findByIdAndEstablishmentId(gradeLevelId, establishmentId)
-			.orElseThrow(SchoolCatalogNotFoundException::new);
-		if (gradeLevelRepository.hasActiveClasses(establishmentId, gradeLevelId)) {
-			throw new SchoolCatalogConflictException();
-		}
-		gradeLevelRepository.archive(gradeLevelId, establishmentId);
+		this.licenseApplicationService = licenseApplicationService;
 	}
 
 	@Transactional(readOnly = true)
@@ -176,22 +116,23 @@ public class SchoolCatalogApplicationService {
 		return findClass(establishmentId, academicYearId, schoolClassId);
 	}
 
+	@Transactional(readOnly = true)
+	public SchoolClass findClassForGuardian(UUID establishmentId, UUID academicYearId, UUID schoolClassId) {
+		return schoolClassRepository.findIncludingArchivedByIdAndEstablishmentIdAndAcademicYearId(
+			schoolClassId, establishmentId, academicYearId).orElseThrow(SchoolCatalogNotFoundException::new);
+	}
+
 	@Transactional
 	public SchoolClass createClass(UUID establishmentId, UUID academicYearId,
 		CreateSchoolClassCommand command, EmployeeActor actor) {
 		requireEstablishment(establishmentId, actor);
 		findAcademicYear(establishmentId, academicYearId);
-		gradeLevelRepository.findByIdAndEstablishmentId(command.gradeLevelId(), establishmentId)
-			.orElseThrow(SchoolCatalogNotFoundException::new);
 		String code = normalizeCode(command.code());
-		if (schoolClassRepository.existsByAcademicYearIdAndCode(academicYearId, code)
-			|| schoolClassRepository.existsByAcademicYearIdAndGradeLevelIdAndName(
-				academicYearId, command.gradeLevelId(), command.name().strip())) {
+		if (schoolClassRepository.existsByAcademicYearIdAndCode(academicYearId, code)) {
 			throw new SchoolCatalogConflictException();
 		}
 		try {
-			return schoolClassRepository.save(establishmentId, academicYearId, command.gradeLevelId(),
-				code, command.name());
+			return schoolClassRepository.save(establishmentId, academicYearId, code, command.name());
 		} catch (DataIntegrityViolationException exception) {
 			throw new SchoolCatalogConflictException();
 		}
@@ -203,20 +144,13 @@ public class SchoolCatalogApplicationService {
 		requireEstablishment(establishmentId, actor);
 		findAcademicYear(establishmentId, academicYearId);
 		SchoolClass current = findClass(establishmentId, academicYearId, schoolClassId);
-		UUID gradeLevelId = command.gradeLevelId() == null ? current.gradeLevelId() : command.gradeLevelId();
 		String code = command.code() == null ? current.code() : normalizeCode(command.code());
 		String name = command.name() == null ? current.name() : command.name();
-		gradeLevelRepository.findByIdAndEstablishmentId(gradeLevelId, establishmentId)
-			.orElseThrow(SchoolCatalogNotFoundException::new);
-		if (schoolClassRepository.existsByAcademicYearIdAndCodeAndIdNot(academicYearId, code, schoolClassId)
-			|| schoolClassRepository.existsByAcademicYearIdAndGradeLevelIdAndName(
-				academicYearId, gradeLevelId, name.strip()) &&
-				(!gradeLevelId.equals(current.gradeLevelId()) || !name.equals(current.name()))) {
+		if (schoolClassRepository.existsByAcademicYearIdAndCodeAndIdNot(academicYearId, code, schoolClassId)) {
 			throw new SchoolCatalogConflictException();
 		}
 		try {
-			return schoolClassRepository.update(schoolClassId, establishmentId, academicYearId,
-				gradeLevelId, code, name);
+			return schoolClassRepository.update(schoolClassId, establishmentId, academicYearId, code, name);
 		} catch (DataIntegrityViolationException exception) {
 			throw new SchoolCatalogConflictException();
 		}
@@ -286,6 +220,10 @@ public class SchoolCatalogApplicationService {
 	}
 
 	private void requireEstablishment(UUID establishmentId, EmployeeActor actor) {
+		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.SCHOOL_MANAGEMENT,
+			java.time.Instant.now())) {
+			throw new SchoolCatalogAccessDeniedException();
+		}
 		try {
 			boolean accessible = employeeApplicationService.findEstablishments(actor).stream()
 				.anyMatch(establishment -> establishment.enabled() && establishment.id().equals(establishmentId));

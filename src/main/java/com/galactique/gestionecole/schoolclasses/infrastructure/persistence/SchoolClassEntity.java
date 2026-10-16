@@ -18,8 +18,6 @@ import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
 @Entity
 @Table(name = "school_classes", uniqueConstraints = {
 	@UniqueConstraint(name = "uq_school_classes_year_code", columnNames = {"academic_year_id", "code"}),
-	@UniqueConstraint(name = "uq_school_classes_year_level_name",
-		columnNames = {"academic_year_id", "grade_level_id", "name"}),
 	@UniqueConstraint(name = "uq_school_classes_id_establishment", columnNames = {"id", "establishment_id"})
 })
 public class SchoolClassEntity {
@@ -32,9 +30,6 @@ public class SchoolClassEntity {
 
 	@Column(nullable = false)
 	private UUID academicYearId;
-
-	@Column(nullable = false)
-	private UUID gradeLevelId;
 
 	@Column(nullable = false, length = 40)
 	private String code;
@@ -54,11 +49,9 @@ public class SchoolClassEntity {
 	protected SchoolClassEntity() {
 	}
 
-	public SchoolClassEntity(UUID establishmentId, UUID academicYearId, UUID gradeLevelId,
-		String code, String name) {
+	public SchoolClassEntity(UUID establishmentId, UUID academicYearId, String code, String name) {
 		this.establishmentId = establishmentId;
 		this.academicYearId = academicYearId;
-		this.gradeLevelId = gradeLevelId;
 		this.code = code;
 		this.name = name;
 	}
@@ -78,15 +71,13 @@ public class SchoolClassEntity {
 	public UUID getId() { return id; }
 	public UUID getEstablishmentId() { return establishmentId; }
 	public UUID getAcademicYearId() { return academicYearId; }
-	public UUID getGradeLevelId() { return gradeLevelId; }
 	public String getCode() { return code; }
 	public String getName() { return name; }
 	public boolean isEnabled() { return enabled; }
 	public Instant getCreatedAt() { return createdAt; }
 	public Instant getUpdatedAt() { return updatedAt; }
 
-	public void update(UUID gradeLevelId, String code, String name) {
-		this.gradeLevelId = gradeLevelId;
+	public void update(String code, String name) {
 		this.code = code;
 		this.name = name;
 	}
@@ -96,7 +87,7 @@ public class SchoolClassEntity {
 	}
 
 	public SchoolClass toDomain() {
-		return new SchoolClass(id, establishmentId, academicYearId, gradeLevelId, code, name,
+		return new SchoolClass(id, establishmentId, academicYearId, code, name,
 			enabled, createdAt, updatedAt);
 	}
 }

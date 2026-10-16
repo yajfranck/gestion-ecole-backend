@@ -1,6 +1,7 @@
 package com.galactique.gestionecole.establishments.infrastructure.persistence;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -21,13 +22,29 @@ public class JpaEstablishmentRepositoryAdapter implements EstablishmentRepositor
 	@Override
 	@Transactional
 	public Establishment save(String code, String name) {
-		return toDomain(jpaRepository.save(new EstablishmentEntity(code, name)));
+		return toDomain(jpaRepository.saveAndFlush(new EstablishmentEntity(
+			code.strip().toUpperCase(Locale.ROOT), name.strip())));
+	}
+
+	@Override
+	@Transactional
+	public Establishment update(UUID establishmentId, String code, String name) {
+		EstablishmentEntity entity = jpaRepository.findById(establishmentId).orElseThrow();
+		entity.update(code, name);
+		jpaRepository.flush();
+		return toDomain(entity);
 	}
 
 	@Override
 	@Transactional(readOnly = true)
 	public Optional<Establishment> findById(UUID id) {
 		return jpaRepository.findById(id).map(this::toDomain);
+	}
+
+	@Override
+	@Transactional
+	public Optional<Establishment> findByIdForUpdate(UUID id) {
+		return jpaRepository.findByIdForUpdate(id).map(this::toDomain);
 	}
 
 	@Override

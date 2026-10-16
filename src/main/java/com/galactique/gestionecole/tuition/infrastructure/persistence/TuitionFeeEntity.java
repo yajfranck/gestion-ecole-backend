@@ -41,7 +41,7 @@ public class TuitionFeeEntity {
 	@Column(nullable = false)
 	private LocalDate dueDate;
 	@Column
-	private UUID gradeLevelId;
+	private UUID schoolClassId;
 	@Column
 	private UUID studentId;
 	@Column(nullable = false)
@@ -61,7 +61,7 @@ public class TuitionFeeEntity {
 		amount = draft.amount();
 		currency = draft.currency();
 		dueDate = draft.dueDate();
-		gradeLevelId = draft.gradeLevelId();
+		schoolClassId = draft.schoolClassId();
 		studentId = draft.studentId();
 	}
 
@@ -71,6 +71,6 @@ public class TuitionFeeEntity {
 	public TuitionFee toDomain() {
 		return new TuitionFee(id, establishmentId, academicYearId, feeTypeId, feeTypeCode, feeTypeName,
 			name, amount, currency,
-			dueDate, gradeLevelId, studentId, enabled, createdAt);
+			dueDate, schoolClassId, studentId, enabled, createdAt);
 	}
 }

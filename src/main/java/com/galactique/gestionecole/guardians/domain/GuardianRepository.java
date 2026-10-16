@@ -11,6 +11,7 @@ public interface GuardianRepository {
 	Optional<Guardian> findByIdForUpdate(UUID guardianId);
 	Guardian save(String firstName, String lastName, String email);
 	boolean existsLink(UUID guardianId, UUID studentId);
+	Optional<Student> findLinkedChild(UUID guardianId, UUID studentId);
 	void link(UUID guardianId, UUID studentId);
 	void unlink(UUID guardianId, UUID studentId);
 	List<Guardian> findAllByStudentId(UUID studentId);
