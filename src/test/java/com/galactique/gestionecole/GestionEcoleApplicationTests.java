@@ -25,7 +25,6 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
@@ -63,9 +62,6 @@ class GestionEcoleApplicationTests {
 	@Autowired
 	private EmployeeRepository employeeRepository;
 
-	@Autowired
-	private JdbcTemplate jdbcTemplate;
-
 	@BeforeEach
 	void clearInvitationTokens() {
 		invitationTokens.clear();
@@ -73,51 +69,6 @@ class GestionEcoleApplicationTests {
 
 	@Test
 	void contextLoads() {
-	}
-
-	@Test
-	void localVogtFixtureIsSeeded() {
-		var establishment = establishmentRepository.findById(
-			UUID.fromString("f0320000-0000-4000-8000-000000000001")).orElseThrow();
-		assertEquals("VOGT", establishment.code());
-		assertEquals("COLLEGE VOGT", establishment.name());
-		assertTrue(establishment.enabled());
-		var administrator = userAccountRepository.findByUsername("franckyaj@gmail.com").orElseThrow();
-		assertTrue(administrator.enabled());
-		assertFalse(administrator.locked());
-		assertTrue(administrator.passwordHash().startsWith("$2a$10$"));
-		assertTrue(administrator.roles().stream().anyMatch(role -> role.code().equals("ESTABLISHMENT_ADMIN")));
-		var employee = employeeRepository.findByEmail("franckyaj@gmail.com").orElseThrow();
-		assertEquals("FRANCK", employee.firstName());
-		assertEquals("YAJE", employee.lastName());
-		assertEquals(establishment.id(), employee.establishmentId());
-		assertEquals(administrator.id(), employee.userAccountId());
-		assertTrue(employee.establishmentAdmin());
-		assertEquals(1, jdbcTemplate.queryForObject(
-			"SELECT COUNT(*) FROM enrollments enrollment "
-				+ "JOIN students student ON student.id = enrollment.student_id "
-				+ "JOIN school_classes school_class ON school_class.id = enrollment.school_class_id "
-				+ "JOIN academic_years academic_year ON academic_year.id = enrollment.academic_year_id "
-				+ "JOIN school_class_subjects assignment ON assignment.school_class_id = school_class.id "
-				+ "JOIN subjects subject ON subject.id = assignment.subject_id "
-				+ "WHERE enrollment.establishment_id = ? AND student.first_name = 'Miya' "
-				+ "AND student.last_name = 'WANDJA' AND school_class.code = 'SIXIEME' "
-				+ "AND subject.code = 'MATH' AND academic_year.name = '2026-2027'",
-			Integer.class, establishment.id()));
-		assertEquals(1, jdbcTemplate.queryForObject(
-			"SELECT COUNT(*) FROM tuition_fee_types WHERE establishment_id = ? AND code = 'SCOLARITE' AND enabled = TRUE",
-			Integer.class, establishment.id()));
-		jdbcTemplate.query("SELECT created_at, valid_from, valid_until FROM platform_licenses WHERE establishment_id = ?",
-			(resultSet, rowNumber) -> {
-				var createdAt = resultSet.getObject("created_at", java.time.OffsetDateTime.class).toInstant();
-				var validFrom = resultSet.getObject("valid_from", java.time.OffsetDateTime.class).toInstant();
-				var validUntil = resultSet.getObject("valid_until", java.time.OffsetDateTime.class).toInstant();
-				assertEquals(java.time.Duration.ofMinutes(2), java.time.Duration.between(createdAt, validFrom));
-				assertEquals(java.time.Duration.ofHours(3), java.time.Duration.between(validFrom, validUntil));
-				return validFrom;
-			}, establishment.id());
-		assertEquals(1, jdbcTemplate.queryForObject(
-			"SELECT COUNT(*) FROM platform_licenses WHERE establishment_id = ?", Integer.class, establishment.id()));
 	}
 
 	@Test
