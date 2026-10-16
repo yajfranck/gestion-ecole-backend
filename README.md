@@ -312,22 +312,16 @@ Au 14 octobre 2026, Spring Boot 4.1.1 est stable ; Java 21 est compatible et Mav
 
 ### 7.4 Organisation du backend
 
-#### Donnees de test locales
+#### Migrations et données locales
 
-Le profil `local` applique aussi `db/migration-local/V32__seed_local_vogt_school.sql` :
-etablissement actif `VOGT` / `COLLEGE VOGT`, administrateur `FRANCK YAJE`
-(`franckyaj@gmail.com`), type de frais `SCOLARITE`, annee `2026-2027`
-(du 1er septembre 2026 au 31 aout 2027), classe `SIXIEME`, matiere `MATH`
-affectee a la classe et eleve `Miya WANDJA` inscrit dans cette classe.
-Le compte est deja active; aucune invitation ni aucun envoi SMTP n'est necessaire.
-Le mot de passe de test fourni est stocke exclusivement sous forme de hash BCrypt.
-Ces identifiants publics de developpement ne doivent jamais etre utilises en production.
+Les migrations initiales sont regroupées avant le premier déploiement :
+- `db/migration/V1__initial_schema_and_reference_data.sql` initialise le schéma et les données de référence, sans compte utilisateur ni données métier de test.
+- `db/migration-local/V2__seed_local_admin_account.sql` crée uniquement le compte de développement `admin-tech` avec son rôle `ADMIN`.
 
-La licence locale tous modules commence deux minutes apres son insertion et dure
-trois heures : les acces metier sont donc refuses avant T+2 min et apres T+182 min.
-La migration n'est appliquee qu'une fois par base. La base H2 en memoire etant
-recreee a chaque redemarrage du processus, le jeu et les horaires sont reinitialises.
-Demarrage : `./mvnw -Plocal spring-boot:run -Dspring-boot.run.profiles=local`.
+Le jeu de test VOGT a été retiré : aucun établissement, élève ou licence de test n'est inséré au démarrage.
+Le profil `local` utilise H2 en mémoire : arrêter puis redémarrer le processus recrée la base avec ces migrations.
+Une base persistante ayant exécuté les anciennes migrations n'est pas compatible avec cette nouvelle baseline : utiliser une base neuve, sans contourner les contrôles Flyway ni supprimer automatiquement des données.
+Démarrage : `./mvnw -Plocal spring-boot:run -Dspring-boot.run.profiles=local`.
 
 #### Structure des modules
 
@@ -352,7 +346,7 @@ Organisation proposée par domaines fonctionnels, à ajuster à mesure que le co
 
 Chaque domaine peut contenir ses propres api/controller, application/service, domain et infrastructure/repository. Les contrôleurs exposent des DTO plutôt que les entités JPA. Les règles métier ne doivent pas dépendre directement d’un fournisseur de paiement ou de visioconférence.
 
-Dans le backend actuel, les modules sont sous `com.galactique.gestionecole` et suivent ces frontières. Le portail parent expose des informations de l’enfant après vérification du lien actif; `learning` gère les leçons/devoirs publiés et leurs pièces jointes en stockage privé; `licenses` gère les offres, périodes, suspensions et entitlements par établissement. V30 préserve l’accès des établissements existants avec une licence legacy sans échéance. Tout nouvel établissement nécessite une attribution explicite; aucun prix, quota ou essai n’est défini par défaut. Le contrat HTTP détaillé est maintenu dans `doc-api.md` et `swagger.yaml`.
+Dans le backend actuel, les modules sont sous `com.galactique.gestionecole` et suivent ces frontières. Le portail parent expose des informations de l’enfant après vérification du lien actif; `learning` gère les leçons/devoirs publiés et leurs pièces jointes en stockage privé; `licenses` gère les offres, périodes, suspensions et entitlements par établissement. La baseline inclut l’offre de référence legacy, sans attribuer de licence en l’absence d’établissement. Tout nouvel établissement nécessite une attribution explicite; aucun prix, quota ou essai n’est défini par défaut. Le contrat HTTP détaillé est maintenu dans `doc-api.md` et `swagger.yaml`.
 
 ### 7.5 Modèle de données de départ
 

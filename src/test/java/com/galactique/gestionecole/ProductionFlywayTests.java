@@ -24,6 +24,15 @@ import com.galactique.gestionecole.security.infrastructure.persistence.RoleJpaRe
 @ActiveProfiles("production")
 class ProductionFlywayTests {
 	@Autowired
+	private org.flywaydb.core.Flyway flyway;
+
+	@Test
+	void usesSingleInitialMigration() {
+		assertEquals(1, flyway.info().applied().length);
+		assertEquals("1", flyway.info().current().getVersion().toString());
+	}
+
+	@Autowired
 	private UserAccountRepository userAccountRepository;
 
 	@Autowired

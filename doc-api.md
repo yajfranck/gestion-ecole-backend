@@ -732,7 +732,7 @@ Les routes parent réutilisent `can_guardian_read_children` et réévaluent le l
 
 L’établissement est le titulaire du droit d’accès, conformément au modèle SaaS du README. Aucun prix, quota ou essai n’est fixé par cette tranche. Une offre contient un ensemble de capacités (`SCHOOL_MANAGEMENT`, `STUDENT_RECORDS`, `PARENT_PORTAL`, `TUITION`, `ATTENDANCE`, `LEARNING_CONTENT`). Une licence possède une période `[validFrom, validUntil)` (fin facultative) et peut être suspendue. L’état retourné est `UPCOMING`, `ACTIVE`, `EXPIRED` ou `SUSPENDED`. Les événements d’attribution, remplacement, suspension et réactivation sont audités.
 
-La migration V30 attribue `LEGACY_FULL_ACCESS` sans échéance aux établissements déjà présents, afin de ne pas couper leurs services. Les nouveaux établissements ne reçoivent pas de licence implicite : un administrateur plateforme doit en attribuer une. Les changements de licence verrouillent la ligne établissement et refusent les chevauchements avec une licence future; une licence antérieure chevauchante est terminée au début de sa remplaçante.
+La baseline V1 crée l’offre de référence `LEGACY_FULL_ACCESS`, sans établissement ni licence de test préchargés. Les nouveaux établissements ne reçoivent pas de licence implicite : un administrateur plateforme doit en attribuer une. Les changements de licence verrouillent la ligne établissement et refusent les chevauchements avec une licence future; une licence antérieure chevauchante est terminée au début de sa remplaçante.
 
 - `GET /api/v1/establishments/{establishmentId}/license` — `can_license_read` (ou `ROLE_ADMIN`); établissement strictement limité au périmètre autorisé.
 - `GET /api/v1/admin/license-offers` — rôle `ADMIN` uniquement; catalogue actif.
