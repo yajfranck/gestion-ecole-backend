@@ -64,6 +64,12 @@ public class JpaAcademicYearRepositoryAdapter implements AcademicYearRepository 
 
 	@Override
 	@Transactional
+	public Optional<AcademicYear> findForUpdate(UUID academicYearId, UUID establishmentId) {
+		return jpaRepository.findForUpdate(academicYearId, establishmentId).map(AcademicYearEntity::toDomain);
+	}
+
+	@Override
+	@Transactional
 	public AcademicYear disable(UUID academicYearId, UUID establishmentId) {
 		AcademicYearEntity entity = jpaRepository
 			.findByIdAndEstablishmentIdAndEnabledTrue(academicYearId, establishmentId).orElseThrow();

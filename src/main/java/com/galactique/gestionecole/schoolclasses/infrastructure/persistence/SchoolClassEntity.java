@@ -37,6 +37,9 @@ public class SchoolClassEntity {
 	@Column(nullable = false, length = 100)
 	private String name;
 
+	@Column(length = 100)
+	private String series;
+
 	@Column(nullable = false)
 	private boolean enabled = true;
 
@@ -49,11 +52,12 @@ public class SchoolClassEntity {
 	protected SchoolClassEntity() {
 	}
 
-	public SchoolClassEntity(UUID establishmentId, UUID academicYearId, String code, String name) {
+	public SchoolClassEntity(UUID establishmentId, UUID academicYearId, String code, String name, String series) {
 		this.establishmentId = establishmentId;
 		this.academicYearId = academicYearId;
 		this.code = code;
 		this.name = name;
+		this.series = series;
 	}
 
 	@PrePersist
@@ -73,13 +77,15 @@ public class SchoolClassEntity {
 	public UUID getAcademicYearId() { return academicYearId; }
 	public String getCode() { return code; }
 	public String getName() { return name; }
+	public String getSeries() { return series; }
 	public boolean isEnabled() { return enabled; }
 	public Instant getCreatedAt() { return createdAt; }
 	public Instant getUpdatedAt() { return updatedAt; }
 
-	public void update(String code, String name) {
+	public void update(String code, String name, String series) {
 		this.code = code;
 		this.name = name;
+		this.series = series;
 	}
 
 	public void archive() {
@@ -87,7 +93,7 @@ public class SchoolClassEntity {
 	}
 
 	public SchoolClass toDomain() {
-		return new SchoolClass(id, establishmentId, academicYearId, code, name,
+		return new SchoolClass(id, establishmentId, academicYearId, code, name, series,
 			enabled, createdAt, updatedAt);
 	}
 }

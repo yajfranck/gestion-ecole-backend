@@ -1,6 +1,7 @@
 package com.galactique.gestionecole.tuition.api;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -177,6 +178,132 @@ class TuitionControllerTests {
 			.andExpect(status().isForbidden());
 	}
 
+	@Test
+	void oneFeeTargetsMultipleClassesAndFutureEnrollmentsWithoutChargingOtherClasses() throws Exception {
+		Establishment school = createEstablishment();
+		String base = "/api/v1/establishments/" + school.id();
+		String yearId = createAcademicYear(base);
+		String firstClassId = createClass(base, yearId, "MULTI-A");
+		String secondClassId = createClass(base, yearId, "MULTI-B");
+		String excludedClassId = createClass(base, yearId, "EXCLUDED");
+		String firstStudentId = createStudent(base);
+		String secondStudentId = createStudent(base);
+		String excludedStudentId = createStudent(base);
+		createEnrollment(base, yearId, firstStudentId, firstClassId);
+		createEnrollment(base, yearId, secondStudentId, secondClassId);
+		createEnrollment(base, yearId, excludedStudentId, excludedClassId);
+		String feeTypeId = createFeeType(base);
+		String feesUrl = base + "/school-years/" + yearId + "/tuition-fees";
+		MvcResult result = mockMvc.perform(post(feesUrl).with(admin("can_tuition_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(feeRequest(feeTypeId, "\"schoolClassIds\":[\"" + firstClassId + "\",\"" + secondClassId + "\"]")))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.chargesCreated").value(2))
+			.andExpect(jsonPath("$.fee.scope").value("SCHOOL_CLASS"))
+			.andExpect(jsonPath("$.fee.schoolClassId").isEmpty())
+			.andExpect(jsonPath("$.fee.schoolClassIds", containsInAnyOrder(firstClassId, secondClassId)))
+			.andReturn();
+		String feeId = JsonPath.read(result.getResponse().getContentAsString(), "$.fee.id");
+		mockMvc.perform(get(feesUrl).with(admin("can_tuition_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)))
+			.andExpect(jsonPath("$[0].schoolClassIds", containsInAnyOrder(firstClassId, secondClassId)));
+		String newStudentId = createStudent(base);
+		mockMvc.perform(put(base + "/payment-methods").with(admin("can_payment_method_update"))
+			.contentType(MediaType.APPLICATION_JSON).content("{\"methods\":[{\"code\":\"CASH\",\"name\":\"Cash\"}]}"))
+			.andExpect(status().isOk());
+		mockMvc.perform(post(base + "/school-years/" + yearId + "/enrollments")
+			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("ADMIN_ACCESS"),
+				new SimpleGrantedAuthority("can_enrollment_create"), new SimpleGrantedAuthority("can_payment_record")))
+			.contentType(MediaType.APPLICATION_JSON).content("{\"studentId\":\"" + newStudentId
+				+ "\",\"schoolClassId\":\"" + secondClassId + "\",\"acceptAdvance\":true,\"payments\":[{\"feeId\":\""
+				+ feeId + "\",\"amount\":10,\"paymentMethodCode\":\"CASH\"}]}"))
+			.andExpect(status().isCreated());
+		String newExcludedStudentId = createStudent(base);
+		createEnrollment(base, yearId, newExcludedStudentId, excludedClassId);
+		for (String studentId : java.util.List.of(firstStudentId, secondStudentId, newStudentId)) {
+			mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+				.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)))
+				.andExpect(jsonPath("$[0].feeId").value(feeId))
+				.andExpect(jsonPath("$[0].amount").value(100.00));
+		}
+		for (String studentId : java.util.List.of(excludedStudentId, newExcludedStudentId)) {
+			mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+				.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+		}
+		mockMvc.perform(post(feesUrl + "/" + feeId + "/apply").with(admin("can_tuition_apply")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.chargesCreated").value(0));
+	}
+
+	@Test
+	void invalidClassSelectionsDoNotCreateFeesOrCharges() throws Exception {
+		Establishment school = createEstablishment();
+		String base = "/api/v1/establishments/" + school.id();
+		String yearId = createAcademicYear(base);
+		String classId = createClass(base, yearId, "VALIDATION");
+		String studentId = createStudent(base);
+		createEnrollment(base, yearId, studentId, classId);
+		String feeTypeId = createFeeType(base);
+		String feesUrl = base + "/school-years/" + yearId + "/tuition-fees";
+		for (String selection : java.util.List.of(
+			"\"schoolClassIds\":[]",
+			"\"schoolClassIds\":[null]",
+			"\"schoolClassIds\":[\"" + classId + "\",\"" + classId + "\"]",
+			"\"schoolClassId\":\"" + classId + "\",\"schoolClassIds\":[\"" + classId + "\"]",
+			"\"studentId\":\"" + studentId + "\",\"schoolClassIds\":[\"" + classId + "\"]")) {
+			mockMvc.perform(post(feesUrl).with(admin("can_tuition_create"))
+				.contentType(MediaType.APPLICATION_JSON).content(feeRequest(feeTypeId, selection)))
+				.andExpect(status().isBadRequest());
+		}
+		mockMvc.perform(get(feesUrl).with(admin("can_tuition_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+		mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+	}
+
+	@Test
+	void allSelectedClassesMustBeActiveAndBelongToTheRequestedSchoolAndYear() throws Exception {
+		Establishment school = createEstablishment();
+		String base = "/api/v1/establishments/" + school.id();
+		String yearId = createAcademicYear(base);
+		String validClassId = createClass(base, yearId, "VALID");
+		String studentId = createStudent(base);
+		createEnrollment(base, yearId, studentId, validClassId);
+		String archivedClassId = createClass(base, yearId, "ARCHIVED");
+		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete(
+			base + "/school-years/" + yearId + "/classes/" + archivedClassId)
+			.with(admin("can_school_class_delete"))).andExpect(status().isNoContent());
+		String otherYearResponse = mockMvc.perform(post(base + "/school-years")
+			.with(admin("can_academic_year_create")).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"name\":\"2026-2027\",\"startsOn\":\"2026-09-01\",\"endsOn\":\"2027-06-30\"}"))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		String otherYearClassId = createClass(base, JsonPath.read(otherYearResponse, "$.id"), "OTHER-YEAR");
+		Establishment otherSchool = createEstablishment();
+		String otherBase = "/api/v1/establishments/" + otherSchool.id();
+		String foreignClassId = createClass(otherBase, createAcademicYear(otherBase), "FOREIGN");
+		String feeTypeId = createFeeType(base);
+		String feesUrl = base + "/school-years/" + yearId + "/tuition-fees";
+		for (String invalidClassId : java.util.List.of(archivedClassId, otherYearClassId, foreignClassId, UUID.randomUUID().toString())) {
+			mockMvc.perform(post(feesUrl).with(admin("can_tuition_create"))
+				.contentType(MediaType.APPLICATION_JSON).content(feeRequest(feeTypeId,
+					"\"schoolClassIds\":[\"" + validClassId + "\",\"" + invalidClassId + "\"]")))
+				.andExpect(status().isNotFound());
+		}
+		mockMvc.perform(get(feesUrl).with(admin("can_tuition_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+		mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+	}
+
+	private Establishment createEstablishment() {
+		return LicensedEstablishmentFixture.create(establishmentRepository, licenseApplicationService,
+			"TUI-" + UUID.randomUUID().toString().substring(0, 8), "Tuition Test School");
+	}
+
+	private static String feeRequest(String feeTypeId, String selection) {
+		return "{\"name\":\"Multi-class tuition\",\"feeTypeId\":\"" + feeTypeId
+			+ "\",\"amount\":100.00,\"currency\":\"USD\",\"dueDate\":\"2026-01-31\"," + selection + "}";
+	}
+
 	private String createStudent(String establishmentUrl) throws Exception {
 		MvcResult result = mockMvc.perform(post(establishmentUrl + "/students")
 			.with(admin("can_student_create"))
@@ -191,6 +318,7 @@ class TuitionControllerTests {
 		String response = feeResult.getResponse().getContentAsString();
 		org.junit.jupiter.api.Assertions.assertEquals("SCHOOL_CLASS", JsonPath.read(response, "$.fee.scope"));
 		org.junit.jupiter.api.Assertions.assertEquals(schoolClassId, JsonPath.read(response, "$.fee.schoolClassId"));
+		org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(schoolClassId), JsonPath.read(response, "$.fee.schoolClassIds"));
 		mockMvc.perform(get(establishmentUrl + "/students/" + otherStudentId + "/tuition-fees")
 			.with(admin("can_tuition_read")))
 			.andExpect(status().isOk())

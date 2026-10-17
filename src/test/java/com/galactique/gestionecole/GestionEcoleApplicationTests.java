@@ -138,7 +138,7 @@ class GestionEcoleApplicationTests {
 		mockMvc.perform(get("/api/v1/role"))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[0].code").value("ADMIN"))
-			.andExpect(jsonPath("$[0].permissions[0].code").value("can_establishment_onboard"));
+			.andExpect(jsonPath("$[0].permissions[*].code").value(org.hamcrest.Matchers.hasItem("can_establishment_onboard")));
 
 		mockMvc.perform(get("/api/v1/permission"))
 			.andExpect(status().isOk())

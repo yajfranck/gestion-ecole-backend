@@ -91,7 +91,7 @@ public class TuitionController {
 		@Valid @RequestBody CreateTuitionFeeRequest request, Authentication authentication) {
 		return FeeCreationResponse.from(tuitionApplicationService.createFee(establishmentId, academicYearId,
 			new CreateTuitionFeeCommand(request.name(), request.amount(), request.currency(), request.dueDate(),
-				request.feeTypeId(), request.schoolClassId(), request.studentId()), toActor(authentication)));
+				request.feeTypeId(), request.schoolClassId(), request.studentId(), request.schoolClassIds()), toActor(authentication)));
 	}
 
 	@PostMapping("/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/{feeId}/apply")

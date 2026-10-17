@@ -5,7 +5,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public interface SchoolClassRepository {
-	SchoolClass save(UUID establishmentId, UUID academicYearId, String code, String name);
+	SchoolClass save(UUID establishmentId, UUID academicYearId, String code, String name, String series);
 
 	boolean existsByAcademicYearIdAndCode(UUID academicYearId, String code);
 
@@ -21,7 +21,10 @@ public interface SchoolClassRepository {
 	Optional<SchoolClass> findIncludingArchivedByIdAndEstablishmentIdAndAcademicYearId(
 		UUID schoolClassId, UUID establishmentId, UUID academicYearId);
 
-	SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId, String code, String name);
+	SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId, String code, String name,
+		String series);
 
 	SchoolClass archive(UUID schoolClassId, UUID establishmentId, UUID academicYearId);
+
+	Optional<SchoolClass> findForUpdate(UUID schoolClassId, UUID establishmentId, UUID academicYearId);
 }

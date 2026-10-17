@@ -19,10 +19,28 @@ public class JpaEnrollmentRepositoryAdapter implements EnrollmentRepository {
 
 	@Override
 	@Transactional
-	public Enrollment save(UUID establishmentId, UUID studentId, UUID academicYearId, UUID schoolClassId) {
+	public Enrollment save(UUID establishmentId, UUID studentId, UUID academicYearId, UUID schoolClassId, UUID classroomId,
+		boolean advanceAccepted, String paymentDecisionBy) {
 		return jpaRepository.saveAndFlush(
-			new EnrollmentEntity(establishmentId, studentId, academicYearId, schoolClassId))
+			new EnrollmentEntity(establishmentId, studentId, academicYearId, schoolClassId, classroomId,
+				advanceAccepted, paymentDecisionBy))
 			.toDomain();
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public java.util.Optional<Enrollment> findById(UUID establishmentId, UUID academicYearId, UUID enrollmentId) {
+		return jpaRepository.findByIdAndEstablishmentIdAndAcademicYearId(enrollmentId, establishmentId, academicYearId)
+			.map(EnrollmentEntity::toDomain);
+	}
+
+	@Override
+	@Transactional
+	public Enrollment updateClassroom(Enrollment enrollment, UUID classroomId) {
+		var entity = jpaRepository.findByIdAndEstablishmentIdAndAcademicYearId(enrollment.id(),
+			enrollment.establishmentId(), enrollment.academicYearId()).orElseThrow();
+		entity.changeClassroom(classroomId);
+		return jpaRepository.saveAndFlush(entity).toDomain();
 	}
 
 	@Override

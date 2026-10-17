@@ -55,9 +55,18 @@ public class EnrollmentApplicationService {
 	@Transactional(readOnly = true)
 	public List<Student> findStudentsByClass(UUID establishmentId, UUID academicYearId,
 		UUID schoolClassId, EmployeeActor actor) {
+		return findStudentsByClass(establishmentId, academicYearId, schoolClassId, null, actor);
+	}
+
+	@Transactional(readOnly = true)
+	public List<Student> findStudentsByClass(UUID establishmentId, UUID academicYearId,
+		UUID schoolClassId, UUID classroomId, EmployeeActor actor) {
 		validateAcademicYear(establishmentId, academicYearId, actor);
 		try {
 			schoolCatalogApplicationService.findClass(establishmentId, academicYearId, schoolClassId, actor);
+			if (classroomId != null) {
+				schoolCatalogApplicationService.findClassroom(establishmentId, academicYearId, schoolClassId, classroomId, actor);
+			}
 		} catch (SchoolCatalogNotFoundException exception) {
 			throw new EnrollmentNotFoundException();
 		} catch (SchoolCatalogAccessDeniedException exception) {
@@ -67,6 +76,9 @@ public class EnrollmentApplicationService {
 		for (Enrollment enrollment : enrollmentRepository.findAllByEstablishmentIdAndAcademicYearId(
 			establishmentId, academicYearId)) {
 			if (!enrollment.schoolClassId().equals(schoolClassId)) {
+				continue;
+			}
+			if (classroomId != null && !enrollment.classroomId().equals(classroomId)) {
 				continue;
 			}
 			try {
@@ -117,12 +129,15 @@ public class EnrollmentApplicationService {
 	}
 
 	@Transactional
-	public Enrollment create(UUID establishmentId, UUID academicYearId, CreateEnrollmentCommand command,
+	public EnrollmentCreationResult create(UUID establishmentId, UUID academicYearId, CreateEnrollmentCommand command,
 		EmployeeActor actor) {
 		validateAcademicYear(establishmentId, academicYearId, actor);
+		UUID classroomId;
 		try {
+			schoolCalendarApplicationService.lockYearForEnrollment(establishmentId, academicYearId, actor);
 			studentApplicationService.findById(establishmentId, command.studentId(), actor);
-			schoolCatalogApplicationService.findClass(establishmentId, academicYearId, command.schoolClassId(), actor);
+			classroomId = schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId,
+				command.schoolClassId(), command.classroomId(), actor).id();
 		} catch (StudentNotFoundException | AcademicCalendarNotFoundException | SchoolCatalogNotFoundException exception) {
 			throw new EnrollmentNotFoundException();
 		} catch (StudentAccessDeniedException | AcademicCalendarAccessDeniedException
@@ -134,11 +149,29 @@ public class EnrollmentApplicationService {
 		}
 		try {
 			Enrollment enrollment = enrollmentRepository.save(establishmentId, command.studentId(), academicYearId,
-				command.schoolClassId());
-			enrollmentFeeChargeGateway.applyExistingFees(enrollment);
-			return enrollment;
+				command.schoolClassId(), classroomId, command.acceptAdvance(), actor.username());
+			var payments = enrollmentFeeChargeGateway.applyFeesAndRecordPayments(enrollment, command.payments(), actor);
+			return new EnrollmentCreationResult(enrollment, payments);
 		} catch (DataIntegrityViolationException exception) {
 			throw new EnrollmentConflictException();
+		}
+	}
+
+	@Transactional
+	public Enrollment changeClassroom(UUID establishmentId, UUID academicYearId, UUID enrollmentId,
+		UUID classroomId, EmployeeActor actor) {
+		validateAcademicYear(establishmentId, academicYearId, actor);
+		Enrollment enrollment = enrollmentRepository.findById(establishmentId, academicYearId, enrollmentId)
+			.orElseThrow(EnrollmentNotFoundException::new);
+		try {
+			studentApplicationService.findById(establishmentId, enrollment.studentId(), actor);
+			var classroom = schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId,
+				enrollment.schoolClassId(), classroomId, actor);
+			return enrollmentRepository.updateClassroom(enrollment, classroom.id());
+		} catch (StudentNotFoundException | SchoolCatalogNotFoundException exception) {
+			throw new EnrollmentNotFoundException();
+		} catch (StudentAccessDeniedException | SchoolCatalogAccessDeniedException exception) {
+			throw new EnrollmentAccessDeniedException();
 		}
 	}
 

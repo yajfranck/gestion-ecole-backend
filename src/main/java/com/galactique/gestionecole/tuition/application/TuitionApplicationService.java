@@ -53,6 +53,7 @@ public class TuitionApplicationService {
 	private final SchoolCatalogApplicationService schoolCatalogApplicationService;
 	private final EnrollmentApplicationService enrollmentApplicationService;
 	private final LicenseApplicationService licenseApplicationService;
+	private final TuitionPaymentRecorder paymentRecorder;
 
 	public TuitionApplicationService(TuitionRepository tuitionRepository,
 		EmployeeApplicationService employeeApplicationService,
@@ -60,7 +61,7 @@ public class TuitionApplicationService {
 		SchoolCalendarApplicationService schoolCalendarApplicationService,
 		SchoolCatalogApplicationService schoolCatalogApplicationService,
 		EnrollmentApplicationService enrollmentApplicationService,
-		LicenseApplicationService licenseApplicationService) {
+		LicenseApplicationService licenseApplicationService, TuitionPaymentRecorder paymentRecorder) {
 		this.tuitionRepository = tuitionRepository;
 		this.employeeApplicationService = employeeApplicationService;
 		this.studentApplicationService = studentApplicationService;
@@ -68,6 +69,7 @@ public class TuitionApplicationService {
 		this.schoolCatalogApplicationService = schoolCatalogApplicationService;
 		this.enrollmentApplicationService = enrollmentApplicationService;
 		this.licenseApplicationService = licenseApplicationService;
+		this.paymentRecorder = paymentRecorder;
 	}
 
 	@Transactional(readOnly = true)
@@ -80,20 +82,28 @@ public class TuitionApplicationService {
 	public FeeCreationResult createFee(UUID establishmentId, UUID academicYearId,
 		CreateTuitionFeeCommand command, EmployeeActor actor) {
 		var year = validateYear(establishmentId, academicYearId, actor);
+		try {
+			year = schoolCalendarApplicationService.lockYearForEnrollment(establishmentId, academicYearId, actor);
+		} catch (AcademicCalendarNotFoundException exception) {
+			throw new TuitionNotFoundException();
+		} catch (AcademicCalendarAccessDeniedException exception) {
+			throw new TuitionAccessDeniedException();
+		}
 		String normalizedName = required(command.name(), "name", 120);
 		BigDecimal normalizedAmount = normalizeAmount(command.amount());
 		String normalizedCurrency = normalizeCurrency(command.currency());
 		var feeType = tuitionRepository.findFeeType(command.feeTypeId(), establishmentId)
 			.filter(TuitionFeeType::enabled).orElseThrow(TuitionNotFoundException::new);
+		List<UUID> schoolClassIds = resolveSchoolClassIds(command);
 		if (command.dueDate() == null || command.dueDate().isBefore(year.startsOn())
 			|| command.dueDate().isAfter(year.endsOn())
-			|| (command.schoolClassId() != null && command.studentId() != null)) {
-			throw new TuitionValidationException("Due date must be within the academic year and a fee cannot target both a class and a student");
+			|| (!schoolClassIds.isEmpty() && command.studentId() != null)) {
+			throw new TuitionValidationException("Due date must be within the academic year and a fee cannot target both classes and a student");
 		}
 		try {
-			if (command.schoolClassId() != null) {
+			for (UUID schoolClassId : schoolClassIds) {
 				schoolCatalogApplicationService.findClass(
-					establishmentId, academicYearId, command.schoolClassId(), actor);
+					establishmentId, academicYearId, schoolClassId, actor);
 			}
 			if (command.studentId() != null) {
 				studentApplicationService.findById(establishmentId, command.studentId(), actor);
@@ -108,7 +118,7 @@ public class TuitionApplicationService {
 		try {
 			fee = tuitionRepository.saveFee(new TuitionFeeDraft(establishmentId, academicYearId,
 				feeType.id(), feeType.code(), feeType.name(), normalizedName, normalizedAmount, normalizedCurrency, command.dueDate(),
-				command.schoolClassId(), command.studentId()));
+				schoolClassIds, command.studentId()));
 		} catch (DataIntegrityViolationException exception) {
 			throw new TuitionConflictException();
 		}
@@ -175,30 +185,9 @@ public class TuitionApplicationService {
 	public PaymentResult recordPayment(UUID establishmentId, UUID studentId, UUID chargeId,
 		BigDecimal amount, String paymentMethodCode, String reference, EmployeeActor actor) {
 		validateStudent(establishmentId, studentId, actor);
-		BigDecimal normalizedAmount = normalizeAmount(amount);
-		String normalizedMethod = required(paymentMethodCode, "paymentMethodCode", 40)
-			.toUpperCase(Locale.ROOT);
-		TuitionPaymentMethod selectedMethod = tuitionRepository.findPaymentMethods(establishmentId).stream()
-			.filter(method -> method.code().equals(normalizedMethod)).findFirst()
-			.orElseThrow(() -> new TuitionValidationException("The payment method is not enabled for this establishment"));
-		StudentFeeCharge charge = tuitionRepository.findChargeForUpdate(chargeId, establishmentId, studentId)
-			.orElseThrow(TuitionNotFoundException::new);
-		BigDecimal paid = tuitionRepository.sumPayments(chargeId);
-		BigDecimal balance = charge.amount().subtract(paid);
-		if (normalizedAmount.compareTo(balance) > 0) {
-			throw new TuitionConflictException();
-		}
-		String normalizedReference = reference == null || reference.isBlank() ? null : required(reference, "reference", 120);
-		String receiptNumber = String.format(Locale.ROOT, "REC-%08d", tuitionRepository.nextReceiptNumber());
-		TuitionPayment payment;
-		try {
-			payment = tuitionRepository.savePayment(charge, receiptNumber, normalizedAmount,
-				normalizedMethod, selectedMethod.name(), normalizedReference, actor.username());
-		} catch (DataIntegrityViolationException exception) {
-			throw new TuitionConflictException();
-		}
-		BigDecimal updatedPaid = paid.add(normalizedAmount);
-		return new PaymentResult(payment, charge, updatedPaid, charge.amount().subtract(updatedPaid));
+		var result = paymentRecorder.record(establishmentId, studentId, chargeId, amount,
+			paymentMethodCode, reference, actor.username());
+		return new PaymentResult(result.payment(), result.charge(), result.totalPaid(), result.balance());
 	}
 
 	@Transactional(readOnly = true)
@@ -340,13 +329,16 @@ public class TuitionApplicationService {
 		if (fee.studentId() != null && !fee.studentId().equals(enrollment.studentId())) {
 			return false;
 		}
-		if (fee.schoolClassId() == null) {
+		if (fee.schoolClassIds().isEmpty()) {
 			return true;
+		}
+		if (!fee.schoolClassIds().contains(enrollment.schoolClassId())) {
+			return false;
 		}
 		try {
 			SchoolClass schoolClass = schoolCatalogApplicationService.findClass(fee.establishmentId(),
 				fee.academicYearId(), enrollment.schoolClassId(), actor);
-			return fee.schoolClassId().equals(schoolClass.id());
+			return fee.schoolClassIds().contains(schoolClass.id());
 		} catch (SchoolCatalogNotFoundException exception) {
 			return false;
 		} catch (SchoolCatalogAccessDeniedException exception) {
@@ -420,6 +412,18 @@ public class TuitionApplicationService {
 			java.time.Instant.now())) {
 			throw new TuitionAccessDeniedException();
 		}
+	}
+
+	private List<UUID> resolveSchoolClassIds(CreateTuitionFeeCommand command) {
+		if (command.schoolClassIds() == null) {
+			return command.schoolClassId() == null ? List.of() : List.of(command.schoolClassId());
+		}
+		List<UUID> ids = command.schoolClassIds();
+		if (command.schoolClassId() != null || ids.isEmpty() || ids.stream().anyMatch(java.util.Objects::isNull)
+			|| new java.util.HashSet<>(ids).size() != ids.size()) {
+			throw new TuitionValidationException("Provide either schoolClassId or a non-empty schoolClassIds list with unique non-null IDs");
+		}
+		return List.copyOf(ids);
 	}
 
 	private BigDecimal normalizeAmount(BigDecimal amount) {

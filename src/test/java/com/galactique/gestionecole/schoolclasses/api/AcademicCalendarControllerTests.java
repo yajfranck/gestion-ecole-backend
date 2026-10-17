@@ -130,6 +130,16 @@ class AcademicCalendarControllerTests {
 			.andExpect(status().isForbidden());
 	}
 
+	@Test
+	void administratorWithGuardianPermissionStillReadsYearsWithoutLinkedChildren() throws Exception {
+		Establishment establishment = createEstablishment();
+		mockMvc.perform(get(yearUrl(establishment.id()))
+			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("ADMIN_ACCESS"),
+				new SimpleGrantedAuthority("can_academic_year_read"),
+				new SimpleGrantedAuthority("can_guardian_read_children"))))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+	}
+
 	private Establishment createEstablishment() {
 		String code = "CAL-" + UUID.randomUUID().toString().substring(0, 8);
 		return LicensedEstablishmentFixture.create(establishmentRepository, licenseApplicationService,

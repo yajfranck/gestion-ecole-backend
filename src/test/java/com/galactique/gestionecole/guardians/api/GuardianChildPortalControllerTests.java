@@ -3,8 +3,11 @@ package com.galactique.gestionecole.guardians.api;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.matchesPattern;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -159,12 +162,110 @@ class GuardianChildPortalControllerTests {
 			.andExpect(status().isNotFound());
 	}
 
-	private void linkGuardian(Establishment establishment, String studentId, String email) throws Exception {
-		mockMvc.perform(post("/api/v1/establishments/" + establishment.id() + "/students/" + studentId + "/guardians")
+	@Test
+	void guardianListsAllActiveYearsOfTheirChildsSchoolUsingTheExistingEndpoint() throws Exception {
+		Establishment school = createEstablishment();
+		String base = "/api/v1/establishments/" + school.id();
+		String studentId = createStudent(base, "School years child");
+		String previousYearId = createAcademicYear(base, 2025);
+		String currentYearId = createAcademicYear(base, 2026);
+		String archivedYearId = createAcademicYear(base, 2024);
+		String nextYearId = createAcademicYear(base, 2027);
+		mockMvc.perform(delete(base + "/school-years/" + archivedYearId)
+			.with(admin("can_academic_year_delete"))).andExpect(status().isNoContent());
+		Establishment otherSchool = createEstablishment();
+		String otherBase = "/api/v1/establishments/" + otherSchool.id();
+		String otherChildId = createStudent(otherBase, "Other school child");
+		String otherYearId = createAcademicYear(otherBase, 2028);
+
+		String email = "school-years-" + UUID.randomUUID() + "@example.org";
+		String guardianId = linkGuardian(school, studentId, email);
+		String parentToken = acceptGuardianInvitationAndLogin(email);
+		String url = schoolYearsUrl(school.id().toString());
+		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(3)))
+			.andExpect(jsonPath("$[*].id", contains(nextYearId, currentYearId, previousYearId)))
+			.andExpect(jsonPath("$[0].establishmentId").value(school.id().toString()))
+			.andExpect(jsonPath("$[0].name").value("2027-2028"))
+			.andExpect(jsonPath("$[0].startsOn").value("2027-01-01"))
+			.andExpect(jsonPath("$[0].endsOn").value("2027-12-31"))
+			.andExpect(jsonPath("$[0].enabled").value(true))
+			.andExpect(jsonPath("$[0].createdAt").exists());
+		for (String forbiddenSchoolId : List.of(otherSchool.id().toString(), UUID.randomUUID().toString())) {
+			mockMvc.perform(get(schoolYearsUrl(forbiddenSchoolId)).header("Authorization", bearer(parentToken)))
+				.andExpect(status().isForbidden());
+		}
+		mockMvc.perform(get("/api/v1/guardians/me/children/" + studentId + "/school-years")
+			.header("Authorization", bearer(parentToken))).andExpect(status().isNotFound());
+		linkGuardian(otherSchool, otherChildId, email);
+		mockMvc.perform(get(schoolYearsUrl(otherSchool.id().toString()))
+			.header("Authorization", bearer(parentToken)))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$", hasSize(1)))
+			.andExpect(jsonPath("$[0].id").value(otherYearId));
+		mockMvc.perform(delete(base + "/students/" + studentId + "/guardians/" + guardianId)
+			.with(admin("can_guardian_unlink"))).andExpect(status().isNoContent());
+		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void schoolYearsListGrantsNoManagementRightsAndRechecksLicenseAndChildStatus() throws Exception {
+		Establishment school = createEstablishment();
+		String base = "/api/v1/establishments/" + school.id();
+		String studentId = createStudent(base, "Not yet enrolled child");
+		String yearId = createAcademicYear(base);
+		String email = "school-years-empty-" + UUID.randomUUID() + "@example.org";
+		linkGuardian(school, studentId, email);
+		String parentToken = acceptGuardianInvitationAndLogin(email);
+		String url = schoolYearsUrl(school.id().toString());
+		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)));
+		mockMvc.perform(post(url).header("Authorization", bearer(parentToken))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"name\":\"2028-2029\",\"startsOn\":\"2028-09-01\",\"endsOn\":\"2029-06-30\"}"))
+			.andExpect(status().isForbidden());
+		mockMvc.perform(patch(url + "/" + yearId).header("Authorization", bearer(parentToken))
+			.contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Changed\"}"))
+			.andExpect(status().isForbidden());
+		mockMvc.perform(delete(url + "/" + yearId).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+		mockMvc.perform(get(url + "/" + yearId).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+		mockMvc.perform(get(url + "/" + yearId + "/periods").header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+		var license = licenseApplicationService.findLicenses(school.id(),
+			new EmployeeActor("admin-tech", true, false)).getFirst();
+		licenseApplicationService.suspend(school.id(), license.id(), "TEST_FIXTURE");
+		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+		licenseApplicationService.reactivate(school.id(), license.id(), "TEST_FIXTURE");
+		mockMvc.perform(delete(base + "/students/" + studentId).with(admin("can_student_delete")))
+			.andExpect(status().isNoContent());
+		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
+			.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void schoolYearsListRequiresAuthenticationAndGuardianPermission() throws Exception {
+		String url = schoolYearsUrl(UUID.randomUUID().toString());
+		mockMvc.perform(get(url)).andExpect(status().isUnauthorized());
+		mockMvc.perform(get(url).with(user("staff@example.org")
+			.authorities(new SimpleGrantedAuthority("STAFF_ACCESS"))))
+			.andExpect(status().isForbidden());
+		mockMvc.perform(get(schoolYearsUrl("invalid-uuid")).with(user("parent@example.org")
+			.authorities(new SimpleGrantedAuthority("can_guardian_read_children"))))
+			.andExpect(status().isBadRequest());
+	}
+
+	private String linkGuardian(Establishment establishment, String studentId, String email) throws Exception {
+		MvcResult result = mockMvc.perform(post("/api/v1/establishments/" + establishment.id() + "/students/" + studentId + "/guardians")
 			.with(admin("can_guardian_link"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"firstName\":\"Grace\",\"lastName\":\"Guardian\",\"email\":\"" + email + "\"}"))
-			.andExpect(status().isCreated());
+			.andExpect(status().isCreated()).andReturn();
+		return JsonPath.read(result.getResponse().getContentAsString(), "$.guardian.id");
 	}
 
 	private String createAttendanceWriterLogin(Establishment establishment) throws Exception {
@@ -220,10 +321,15 @@ class GuardianChildPortalControllerTests {
 	}
 
 	private String createAcademicYear(String base) throws Exception {
+		return createAcademicYear(base, 2026);
+	}
+
+	private String createAcademicYear(String base, int startsIn) throws Exception {
 		MvcResult result = mockMvc.perform(post(base + "/school-years")
 			.with(admin("can_academic_year_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"name\":\"2026-2027\",\"startsOn\":\"2026-01-01\",\"endsOn\":\"2026-12-31\"}"))
+			.content("{\"name\":\"" + startsIn + "-" + (startsIn + 1) + "\",\"startsOn\":\""
+				+ startsIn + "-01-01\",\"endsOn\":\"" + startsIn + "-12-31\"}"))
 			.andExpect(status().isCreated()).andReturn();
 		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}
@@ -285,6 +391,10 @@ class GuardianChildPortalControllerTests {
 	private static String attendanceUrl(UUID establishmentId, String yearId, String classId, String date) {
 		return "/api/v1/establishments/" + establishmentId + "/school-years/" + yearId
 			+ "/classes/" + classId + "/attendance/" + date;
+	}
+
+	private static String schoolYearsUrl(String establishmentId) {
+		return "/api/v1/establishments/" + establishmentId + "/school-years";
 	}
 
 	private static org.springframework.test.web.servlet.request.RequestPostProcessor admin(String permission) {

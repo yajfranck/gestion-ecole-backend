@@ -7,8 +7,8 @@ info:
     Les endpoints Employee sont filtrés selon l'établissement du responsable.
     Les routes globales de consultation des comptes, rôles et permissions exigent
     ADMIN_ACCESS. La gestion des rôles d'école est limitée à l'établissement via
-    can_role_* et can_permission_read. ADMIN est réservé à la création d'un établissement et à l'invitation
-    de son premier administrateur. Aucun rôle n'a ADMIN_ACCESS par défaut après V21;
+    can_role_* et can_permission_read. ADMIN accède aux établissements, à leur création
+    avec invitation du premier administrateur et au dashboard plateforme. Aucun rôle n'a ADMIN_ACCESS par défaut après V21;
     les routes globales de sécurité nécessitent un provisionnement distinct.
     La gestion des élèves exige can_student_*; les inscriptions exigent
     can_enrollment_read ou can_enrollment_create; les employés et les
@@ -37,8 +37,702 @@ tags:
   - name: Personnel
   - name: Contenus pédagogiques
   - name: Licences
+  - name: Dashboard
+  - name: Emplois du temps
+  - name: Reprise annuelle
   - name: Santé
 paths:
+  "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover":
+    parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Établissement du membre connecté.
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Année scolaire cible active.
+    get:
+      tags:
+      - Reprise annuelle
+      operationId: previewSchoolYearRollover
+      summary: Préparer la reprise de salles depuis la précédente année disponible
+      description: 'Requiert can_school_year_rollover, compte/employé actif du même
+        établissement et SCHOOL_MANAGEMENT, revérifiés en base. Source : fin la plus
+        récente avant le début de la cible, puis début et UUID pour départager. Les
+        années, classes et salles sources archivées sont proposées. Sans précédente
+        : sourceYear=null, classrooms=[], fees=[]. Matières actives uniquement ; frais
+        individuels exclus. Les types et moyens de paiement sont communs aux années.
+        Sans TUITION, financeAvailable=false et toutes les listes financières sont vides.
+        Aucun effet de bord.'
+      security: &1
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Configuration source proposée, éventuellement sans précédente.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SchoolYearRolloverPreview"
+        '400': &2
+          description: Corps invalide, salles doublonnées, source autre que la précédente,
+            échéance hors cible ou type non actif/hors établissement. Aucune écriture
+            partielle.
+        '401': &3
+          description: JWT absent ou invalide.
+        '403': &4
+          description: Permission, compte employé actif ou licence SCHOOL_MANAGEMENT
+            manquants ; TUITION requis si des frais sont à copier.
+        '404': &5
+          description: Cible inexistante/inactive/hors périmètre, salle hors source
+            ou aucune précédente disponible au POST.
+    post:
+      tags:
+      - Reprise annuelle
+      operationId: copyPreviousSchoolYearClassrooms
+      summary: Reprendre plusieurs salles, matières et paramétrage financier
+      description: 'Requiert can_school_year_rollover et SCHOOL_MANAGEMENT ; TUITION
+        si des frais sont retenus. Reprise atomique et répétable, années verrouillées.
+        Copie des classes (code/nom/série) et seules salles choisies, actives en cible,
+        sans DEFAULT implicite. Matières actives réutilisées, affectations cibles réactivées
+        si nécessaire. Types/modes de paiement globaux réutilisés, type archivé à remplacer
+        explicitement. Frais actifs annuels optionnels ou liés aux classes sélectionnées,
+        hors frais individuels : montants/devises conservés, échéances décalées selon
+        les années de début (29 février vers 28 février), surcharge possible. Frais
+        multiclasse unique, étendu au fil des lots. Sans provenance, classe de même
+        code/nom/série et salle de même code/nom compatibles réutilisées ; codes/noms
+        des ressources déjà liées sont conservés. Frais de même nom réutilisable seulement
+        si type, montant, devise, échéance et portée annuelle/classes correspondent.
+        Aucun élève, inscription, créance/impayé, paiement, reçu, emploi du temps ou
+        contenu pédagogique copié. Aucune facturation des inscriptions déjà présentes
+        dans la cible ; application des frais ultérieure explicite via /tuition-fees/{feeId}/apply.
+        Les frais copiés sont pris en compte aux futures inscriptions. Toute incompatibilité
+        annule la transaction. Provenance et auteur enregistrés.'
+      security: *1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/SchoolYearRolloverRequest"
+            example:
+              sourceAcademicYearId: 11111111-1111-4111-8111-111111111111
+              classroomIds:
+              - 22222222-2222-4222-8222-222222222222
+              includeAnnualFees: true
+      responses:
+        '200':
+          description: Correspondances source/cible et créations/réutilisations, y compris
+            lors d’une répétition.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/SchoolYearRolloverResponse"
+        '400': *2
+        '401': *3
+        '403': *4
+        '404': *5
+        '409':
+          description: Classe, salle ou frais cible incompatible/archivé ; conflit d’intégrité.
+            Toute la demande est annulée.
+  ? "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable"
+  : parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: schoolClassId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - Emplois du temps
+      summary: Consulter le modèle hebdomadaire d’une salle
+      description: Requiert can_timetable_read. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Créneaux actifs triés par jour,
+        heure et identifiant. Les jours non ouvrés ne retirent pas les créneaux du modèle.
+      operationId: getClassroomTimetable
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/TimetableEntryResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+      parameters:
+      - name: dayOfWeek
+        in: query
+        required: false
+        schema:
+          "$ref": "#/components/schemas/TimetableDayOfWeek"
+    post:
+      tags:
+      - Emplois du temps
+      summary: Créer un créneau hebdomadaire pour une salle
+      description: Requiert can_timetable_create. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Matière active affectée à la classe.
+        Enseignant facultatif, sinon personnel actif de l’école. Dates inclusives dans
+        l’année et heures locales en minutes entières. Les chevauchements d’un même
+        groupe, enseignant ou roomCode sont refusés, y compris entre années actives
+        qui se recouvrent. Les fermetures ne libèrent pas les réservations du modèle.
+        Les écritures d’une école sont sérialisées.
+      operationId: createClassroomTimetableEntry
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/TimetableEntryRequest"
+            example:
+              subjectId: 11111111-1111-4111-8111-111111111111
+              teacherId: 22222222-2222-4222-8222-222222222222
+              dayOfWeek: MONDAY
+              startTime: '08:00'
+              endTime: '09:00'
+              validFrom: '2026-09-01'
+              validUntil: '2027-06-30'
+              roomCode: LAB-A
+      responses:
+        '201':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TimetableEntryResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+        '409':
+          description: Chevauchement de salle/groupe, enseignant ou local physique,
+            ou conflit d’intégrité. conflictingEntryId identifie le premier créneau
+            incompatible. Toute l’opération est annulée.
+  ? "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/{entryId}"
+  : parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: schoolClassId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: entryId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - Emplois du temps
+      summary: Consulter un créneau actif
+      description: Requiert can_timetable_read. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Le créneau doit appartenir à cette
+        salle.
+      operationId: getClassroomTimetableEntry
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TimetableEntryResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+    put:
+      tags:
+      - Emplois du temps
+      summary: Remplacer les paramètres d’un créneau
+      description: 'Requiert can_timetable_update. Personnel actif rattaché à cette
+        école, compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions
+        et le lien au compte sont revérifiés en base. Année, classe et salle actives;
+        aucun accès parent ou ADMIN plateforme implicite. Corps complet: les enseignants/locaux
+        omis deviennent null et les dates omises reprennent les bornes de l’année. Identité,
+        salle, auteur/date de création et provenance de copie conservés. Vérification
+        des matières, enseignants, dates et conflits comme à la création.'
+      operationId: updateClassroomTimetableEntry
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/TimetableEntryRequest"
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TimetableEntryResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+        '409':
+          description: Chevauchement de salle/groupe, enseignant ou local physique,
+            ou conflit d’intégrité. conflictingEntryId identifie le premier créneau
+            incompatible. Toute l’opération est annulée.
+    delete:
+      tags:
+      - Emplois du temps
+      summary: Archiver un créneau
+      description: Requiert can_timetable_delete. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Archivage logique avec auteur et
+        date, sans suppression de l’historique. Le créneau cesse de réserver les ressources.
+      operationId: archiveClassroomTimetableEntry
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Créneau archivé.
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+  ? "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/copy"
+  : parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: schoolClassId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - Emplois du temps
+      summary: Dupliquer un emploi du temps vers une autre salle
+      description: Requiert can_timetable_copy et, si replaceExisting=true, can_timetable_delete
+        dans le jeton et en base. Personnel actif rattaché à cette école, compte actif
+        non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et le lien au compte
+        sont revérifiés en base. Année, classe et salle actives; aucun accès parent
+        ou ADMIN plateforme implicite. Cible différente dans la même école et année.
+        Une autre classe est permise si toutes les matières y sont actives et affectées.
+        Source non vide. Par défaut ajout sans enseignants ni locaux physiques; teacherMappings
+        prime sur copyTeachers. Conserver enseignants ou locaux peut créer un conflit
+        avec la source. replaceExisting archive tous les créneaux actifs de la cible.
+        Toutes les références et tous les conflits sont validés avant écriture; échec
+        atomique sans altérer source ou destination. Nouveaux UUID et copiedFromId,
+        auteur authentifié. Une copie répétée est soumise aux mêmes conflits.
+      operationId: copyClassroomTimetable
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CopyTimetableRequest"
+            example:
+              targetClassroomId: 33333333-3333-4333-8333-333333333333
+              replaceExisting: false
+              copyTeachers: false
+              copyRoomCodes: false
+              teacherMappings:
+                22222222-2222-4222-8222-222222222222: 44444444-4444-4444-8444-444444444444
+      responses:
+        '201':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/TimetableEntryResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+        '409':
+          description: Chevauchement de salle/groupe, enseignant ou local physique,
+            ou conflit d’intégrité. conflictingEntryId identifie le premier créneau
+            incompatible. Toute l’opération est annulée.
+  ? "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/day"
+  : parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: schoolClassId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - Emplois du temps
+      summary: Consulter les cours d’une journée
+      description: Requiert can_timetable_read. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Date obligatoire dans l’année. Heures
+        locales sans conversion UTC. Les périodes de validité et les jours non ouvrés
+        de l’année sont pris en compte; aucun week-end fermé implicitement. Une semaine
+        contient sept journées du lundi au dimanche; les jours hors année ont withinAcademicYear=false
+        et aucune entrée.
+      operationId: getClassroomDailyTimetable
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TimetableDayResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+      parameters:
+      - name: date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+  ? "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/week"
+  : parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: schoolClassId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: classroomId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - Emplois du temps
+      summary: Consulter les cours d’une semaine
+      description: Requiert can_timetable_read. Personnel actif rattaché à cette école,
+        compte actif non verrouillé et SCHOOL_MANAGEMENT requis. Les permissions et
+        le lien au compte sont revérifiés en base. Année, classe et salle actives; aucun
+        accès parent ou ADMIN plateforme implicite. Date obligatoire dans l’année. Heures
+        locales sans conversion UTC. Les périodes de validité et les jours non ouvrés
+        de l’année sont pris en compte; aucun week-end fermé implicitement. Une semaine
+        contient sept journées du lundi au dimanche; les jours hors année ont withinAcademicYear=false
+        et aucune entrée.
+      operationId: getClassroomWeeklyTimetable
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/TimetableWeekResponse"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+      parameters:
+      - name: date
+        in: query
+        required: true
+        schema:
+          type: string
+          format: date
+  "/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/timetable/non-working-days":
+    parameters:
+    - name: establishmentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    - name: academicYearId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - Emplois du temps
+      summary: Lister les jours non ouvrés de l’année
+      description: Requiert can_timetable_read, personnel actif lié à cette école et
+        SCHOOL_MANAGEMENT. Année active. Permissions revérifiées en base. Liste triée
+        par date, applicable à toutes les salles de cette année pour les vues datées
+        des emplois du temps.
+      operationId: getTimetableNonWorkingDays
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/TimetableNonWorkingDay"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+    put:
+      tags:
+      - Emplois du temps
+      summary: Remplacer les jours non ouvrés de l’année
+      description: Requiert can_timetable_update, personnel actif lié à cette école
+        et SCHOOL_MANAGEMENT. Année active. Remplacement atomique de toute la liste;
+        days=[] efface les jours. Dates uniques dans l’année, noms non blancs. Une erreur
+        conserve le calendrier existant. Ces fermetures ne libèrent pas les réservations
+        du modèle hebdomadaire et ne modifient pas le module de présence.
+      operationId: replaceTimetableNonWorkingDays
+      security:
+      - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/TimetableNonWorkingDaysRequest"
+            example:
+              days:
+              - date: '2026-12-25'
+                name: Jour férié
+      responses:
+        '200':
+          description: Opération réussie.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/TimetableNonWorkingDay"
+        '400':
+          description: UUID, jour, heures, période, corps ou mapping invalide; source
+            vide ou identique à la destination.
+        '401':
+          description: JWT absent, invalide ou expiré.
+        '403':
+          description: Compte ou employé inactif/non lié, permission absente ou révoquée,
+            ou SCHOOL_MANAGEMENT inactif.
+        '404':
+          description: École, année, classe, salle, matière affectée, enseignant ou
+            créneau absent, archivé ou hors périmètre.
+  /api/v1/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Consulter le dashboard administrateur dans son périmètre authentifié
+      description: >-
+        Requiert can_dashboard_read et un compte actif non verrouillé ayant actuellement
+        le rôle ADMIN ou ESTABLISHMENT_ADMIN. Les rôles et la permission sont revérifiés
+        en base. ADMIN reçoit la vue PLATFORM sans données métier des écoles.
+        L'administrateur d'établissement reçoit la vue ESTABLISHMENT de son école
+        déterminée par sa fiche de personnel active liée au compte, y compris si
+        son rôle est hérité du poste. Aucun établissement client ne remplace ce périmètre.
+        Les filtres concernent seulement la vue établissement et sont refusés à ADMIN.
+        Sans filtre, sélection de l'année active contenant la date UTC courante,
+        sinon de la plus récente année active. La date par défaut est ramenée aux
+        bornes de l'année. Sans année disponible, agrégats annuels vides et année null.
+        Les blocs attendance, finance et learning valent null sans les fonctionnalités
+        actives ATTENDANCE, TUITION et LEARNING_CONTENT respectivement. Les compteurs
+        de gestion et la licence restent consultables. Les devises sont séparées ;
+        les paiements partiels sont agrégés avant de sommer les créances. Les montants
+        incluent tous les paiements enregistrés pour les créances de l'année, sans
+        filtre sur leur date d'encaissement. Aucun corps de requête.
+      operationId: getDashboard
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: academicYearId
+          in: query
+          required: false
+          description: Année active de l'établissement authentifié ; réservé à la vue établissement.
+          schema: {type: string, format: uuid}
+        - name: date
+          in: query
+          required: false
+          description: Journée des présences et référence des échéances ; doit être dans l'année sélectionnée. Réservé à la vue établissement.
+          schema: {type: string, format: date}
+      responses:
+        '200':
+          description: Agrégats adaptés au rôle avec generatedAt en UTC ; une seule des sections platform et establishment est renseignée.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DashboardResponse'}
+        '400': {description: Format UUID/date invalide, date hors année ou filtres incompatibles avec la vue plateforme/sans année.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission, compte, rôle administrateur ou fiche de personnel liée refusé.}
+        '404': {description: Établissement désactivé ou année absente, archivée ou hors périmètre.}
   /api/v1/login:
     post:
       tags:
@@ -879,7 +1573,7 @@ paths:
       tags:
         - Catalogue scolaire
       summary: Créer une classe
-      description: Requiert can_school_class_create. La classe appartient à l'année indiquée; son code est unique dans cette année.
+      description: Requiert can_school_class_create, l'accès à l'établissement et SCHOOL_MANAGEMENT actif. La classe appartient à l'année indiquée; son code est unique dans cette année. La série est un libellé libre facultatif, partagé éventuellement par plusieurs classes. Une salle principale DEFAULT est créée automatiquement.
       operationId: createSchoolClass
       parameters:
         - name: establishmentId
@@ -959,7 +1653,7 @@ paths:
       tags:
         - Catalogue scolaire
       summary: Modifier une classe
-      description: Requiert can_school_class_update.
+      description: Requiert can_school_class_update, l'accès à l'établissement et SCHOOL_MANAGEMENT actif. Chaque champ est facultatif; un champ omis ou null est conservé. Envoyer series avec une chaîne vide ou blanche pour retirer la série.
       operationId: updateSchoolClass
       parameters:
         - name: establishmentId
@@ -1171,7 +1865,15 @@ paths:
       tags:
         - Calendrier scolaire
       summary: Lister les années scolaires
-      description: Requiert can_academic_year_read. Retourne les années actives de l'établissement.
+      description: >-
+        Requiert can_academic_year_read dans le périmètre de gestion existant,
+        ou can_guardian_read_children avec au moins un enfant actif lié dans cet
+        établissement et une licence active incluant PARENT_PORTAL. Le compte
+        parent, le tuteur et l'établissement doivent être actifs. Retourne toutes
+        les années actives de l'établissement, y compris celles sans inscription
+        des enfants du parent, de la plus récente à la plus ancienne. Un parent
+        également administrateur conserve son périmètre de gestion. Aucun droit
+        de détail, de périodes ou d'écriture supplémentaire n'est accordé.
       operationId: getAcademicYears
       parameters:
         - name: establishmentId
@@ -1189,10 +1891,12 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AcademicYearResponse'
+        '400':
+          description: Identifiant establishmentId mal formé.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
-          description: Permission can_academic_year_read absente.
+          description: Permissions ou licence requise absentes, ou parent sans enfant actif lié à cet établissement.
         '404':
           description: Établissement absent, désactivé ou hors périmètre.
     post:
@@ -1494,6 +2198,130 @@ paths:
         '404':
           description: Période absente, déjà archivée ou hors périmètre.
 
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms:
+    parameters:
+      - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      tags: [Catalogue scolaire]
+      summary: Lister les salles ou groupes d'une classe
+      description: Requiert can_school_class_read, SCHOOL_MANAGEMENT actif et l'accès à cette école. Classe et année actives. Salles actives triées par nom puis identifiant. Chaque nouvelle classe possède une salle principale DEFAULT renommable.
+      operationId: getClassrooms
+      responses:
+        '200':
+          description: Salles actives de la classe.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: '#/components/schemas/ClassroomResponse'}}
+        '400': {description: UUID invalide.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: École, année ou classe absente, archivée ou hors périmètre.}
+    post:
+      tags: [Catalogue scolaire]
+      summary: Créer une salle ou un groupe dans une classe
+      description: Requiert can_school_class_create, SCHOOL_MANAGEMENT actif et l'accès à l'école. Le code est unique dans la classe, y compris parmi les salles archivées. La série et les matières sont celles de la classe parente.
+      operationId: createClassroom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateClassroomRequest'}
+            example: {code: B, name: Sixième B}
+      responses:
+        '201':
+          description: Salle créée.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassroomResponse'}
+        '400': {description: UUID ou données invalides.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: École, année ou classe absente, archivée ou hors périmètre.}
+        '409': {description: Code de salle déjà utilisé dans cette classe.}
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}:
+    parameters:
+      - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: schoolClassId, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: classroomId, in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      tags: [Catalogue scolaire]
+      summary: Consulter une salle de classe
+      description: Requiert can_school_class_read, SCHOOL_MANAGEMENT actif et l'accès à cette école. La salle doit être active et appartenir à la classe et à l'année indiquées.
+      operationId: getClassroom
+      responses:
+        '200':
+          description: Salle active.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassroomResponse'}
+        '400': {description: UUID invalide.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: Référence absente, archivée ou hors périmètre.}
+    patch:
+      tags: [Catalogue scolaire]
+      summary: Modifier le code ou le nom d'une salle
+      description: Requiert can_school_class_update, SCHOOL_MANAGEMENT actif et l'accès à cette école. Les champs omis ou null sont conservés. Le parent de la salle ne change pas.
+      operationId: updateClassroom
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateClassroomRequest'}
+            example: {name: Sixième A}
+      responses:
+        '200':
+          description: Salle modifiée.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassroomResponse'}
+        '400': {description: UUID ou données invalides.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: Référence absente, archivée ou hors périmètre.}
+        '409': {description: Code de salle déjà utilisé dans la classe.}
+    delete:
+      tags: [Catalogue scolaire]
+      summary: Archiver une salle sans élèves affectés ni créneaux actifs
+      description: Requiert can_school_class_delete, SCHOOL_MANAGEMENT actif et l'accès à cette école. Refus si une inscription référence encore la salle, même pour un élève archivé, ou si un créneau actif la référence. L'archivage est logique.
+      operationId: archiveClassroom
+      responses:
+        '204': {description: Salle archivée.}
+        '400': {description: UUID invalide.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: Référence absente, archivée ou hors périmètre.}
+        '409': {description: Salle encore référencée par une inscription ou un créneau actif.}
+
+  /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments/{enrollmentId}:
+    patch:
+      tags: [Inscriptions]
+      summary: Changer la salle d'un élève dans la même classe
+      description: Requiert can_enrollment_update, STUDENT_RECORDS et SCHOOL_MANAGEMENT actifs et l'accès à l'école. Élève, classe, année et salle actifs. La salle doit appartenir à la classe actuelle. L'inscription et sa date de création sont conservées; les présences restent liées à l'inscription et aucun frais n'est réappliqué. La distribution par salle reflète l'affectation actuelle; aucun historique distinct de changement de salle n'est exposé.
+      operationId: changeEnrollmentClassroom
+      parameters:
+        - {name: establishmentId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: academicYearId, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: enrollmentId, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ChangeEnrollmentClassroomRequest'}
+      responses:
+        '200':
+          description: Inscription avec la salle mise à jour.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentResponse'}
+        '400': {description: UUID ou corps invalide; classroomId absent ou null.}
+        '401': {description: JWT absent, invalide ou expiré.}
+        '403': {description: Permission ou licence insuffisante.}
+        '404': {description: Inscription ou référence absente, archivée ou hors périmètre; salle d'une autre classe.}
+
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments:
     get:
       tags:
@@ -1533,7 +2361,7 @@ paths:
       tags:
         - Inscriptions
       summary: Inscrire un élève dans une classe
-      description: Une seule classe par élève et par année; l'inscription est effective immédiatement et ne dépend pas d'un paiement.
+      description: Requiert can_enrollment_create, STUDENT_RECORDS et SCHOOL_MANAGEMENT actifs et l'accès à l'école. Si des frais actifs s'appliquent, TUITION est aussi requis et le règlement intégral est exigé par défaut. acceptAdvance=true autorise un versement positif partiel; aucun paiement reste interdit si des frais s'appliquent. Tout encaissement exige can_payment_record. Inscription, créances et paiements sont atomiques. Sans frais applicables, paiement facultatif mais aucun frais étranger ne peut être payé. classroomId est obligatoire sauf si une seule salle est active. La décision et son auteur sont conservés; les frais ajoutés ultérieurement ne révoquent pas une inscription antérieure.
       operationId: createEnrollment
       parameters:
         - name: establishmentId
@@ -1554,32 +2382,50 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateEnrollmentRequest'
+            examples:
+              advance:
+                summary: Accepter une avance à l'inscription
+                value:
+                  studentId: 11111111-1111-4111-8111-111111111111
+                  schoolClassId: 22222222-2222-4222-8222-222222222222
+                  classroomId: 33333333-3333-4333-8333-333333333333
+                  acceptAdvance: true
+                  payments:
+                    - {feeId: 44444444-4444-4444-8444-444444444444, amount: 25, paymentMethodCode: CASH, reference: inscription}
+              fullPayment:
+                summary: Solder les frais applicables (exemple avec un frais de 100)
+                value:
+                  studentId: 11111111-1111-4111-8111-111111111111
+                  schoolClassId: 22222222-2222-4222-8222-222222222222
+                  payments:
+                    - {feeId: 44444444-4444-4444-8444-444444444444, amount: 100, paymentMethodCode: CASH}
       responses:
         '201':
-          description: Élève inscrit.
+          description: Élève inscrit avec ses paiements et numéros de reçu; aucun encaissement n'est conservé en cas de refus.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/EnrollmentResponse'
+                $ref: '#/components/schemas/EnrollmentCreationResponse'
         '400':
-          description: Corps invalide.
+          description: Corps, UUID, montant ou moyen de paiement invalide; frais dupliqué; salle non choisie quand plusieurs salles sont actives.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
-          description: Permission can_enrollment_create absente.
+          description: Permission can_enrollment_create ou can_payment_record requise absente; licence ou accès à l'école insuffisant.
         '404':
-          description: Élève, classe, année ou établissement absent, archivé ou hors périmètre.
+          description: Élève, salle, classe, année, établissement ou frais absent, archivé ou hors périmètre.
         '409':
-          description: L'élève possède déjà une inscription pour cette année scolaire.
+          description: Inscription déjà existante, surpaiement ou paiement ne satisfaisant pas la décision. Un paiement requis renvoie code=ENROLLMENT_PAYMENT_REQUIRED et unpaidFeeIds. Toutes les écritures de la tentative sont annulées.
 
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/students:
     get:
       tags:
         - Inscriptions
       summary: Lister les élèves inscrits dans une classe
-      description: Requiert can_enrollment_read; retourne uniquement les élèves actifs de la classe pour l'année scolaire indiquée.
+      description: Requiert can_enrollment_read et l'accès à cette école; retourne uniquement les élèves actifs de la classe pour l'année scolaire indiquée. Le filtre facultatif classroomId doit désigner une salle active de cette classe et de cette année.
       operationId: getClassStudents
       parameters:
+        - {name: classroomId, in: query, required: false, schema: {type: string, format: uuid}, description: Filtrer les élèves par salle.}
         - name: establishmentId
           in: path
           required: true
@@ -1607,12 +2453,14 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/ClassStudentResponse'
+        '400':
+          description: UUID de chemin ou filtre classroomId invalide.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
           description: Permission can_enrollment_read absente.
         '404':
-          description: Année ou classe absente ou hors périmètre.
+          description: Année, classe ou salle absente, archivée ou hors périmètre.
 
   /api/v1/establishments/{establishmentId}/students:
     get:
@@ -2098,7 +2946,15 @@ paths:
       tags:
         - Frais et paiements
       summary: Définir un frais scolaire
-      description: Requiert can_tuition_create. Crée une créance pour chaque élève inscrit correspondant à la portée.
+      description: >-
+        Requiert can_tuition_create et la fonctionnalité TUITION active dans le
+        périmètre de l'établissement. schoolClassIds sélectionne une ou plusieurs
+        classes actives de cette année et de cet établissement. Crée une seule
+        définition avec le même montant et la même échéance pour chaque élève des
+        classes choisies. L'ancien schoolClassId reste accepté, exclusivement.
+        studentId ne peut être combiné avec une sélection de classes. Sans ciblage,
+        le frais est annuel ; une liste vide, des doublons ou des UUID nuls sont
+        refusés. La requête est atomique si une classe est invalide.
       operationId: createTuitionFee
       security:
         - bearerAuth: []
@@ -2129,7 +2985,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/FeeCreationResponse'
         '400':
-          description: Montant, devise, échéance ou portée invalide.
+          description: Montant, devise, échéance, UUID ou portée invalide ; liste de classes vide, doublons, valeurs nulles ou sélections incompatibles.
         '401':
           description: JWT absent, invalide ou expiré.
         '403':
@@ -2144,7 +3000,7 @@ paths:
       tags:
         - Frais et paiements
       summary: Appliquer un frais aux inscriptions
-      description: Requiert can_tuition_apply. L'application est idempotente.
+      description: Requiert can_tuition_apply. Réutilise toutes les classes ciblées par le frais et crée uniquement les créances manquantes. L'application est idempotente.
       operationId: applyTuitionFee
       security:
         - bearerAuth: []
@@ -2386,7 +3242,14 @@ paths:
       tags:
         - Parents et tuteurs
       summary: Lier un tuteur à un élève
-      description: Requiert can_guardian_link. Envoie une invitation au premier lien si le compte parent n'est pas activé.
+      description: >-
+        Requiert can_guardian_link et un élève dans le périmètre de l'établissement.
+        Toute personne peut être tuteur, y compris un tuteur existant, un membre
+        du personnel ou un administrateur. Le compte correspondant à l'e-mail est
+        réutilisé avec ajout du rôle PARENT, sans changer ses autres rôles, son mot
+        de passe ni ses états activé/verrouillé. Sans compte existant, une invitation
+        est envoyée. Un compte réutilisé reçoit ACCESS_ALREADY_ACTIVE ; renouveler
+        les jetons ou se reconnecter pour obtenir les nouvelles permissions.
       operationId: linkGuardian
       security:
         - bearerAuth: []
@@ -2425,7 +3288,7 @@ paths:
         '404':
           description: Élève absent, archivé ou hors périmètre.
         '409':
-          description: Tuteur déjà lié ou email associé à un autre compte.
+          description: Tuteur déjà lié, conflit d'unicité ou adresse réattribuée associée à une autre identité. Un compte existant pour cet e-mail est normalement réutilisé.
 
   /api/v1/establishments/{establishmentId}/students/{studentId}/guardians/{guardianId}:
     delete:
@@ -2494,7 +3357,10 @@ paths:
       tags:
         - Parents et tuteurs
       summary: Lister les enfants du parent connecté
-      description: Requiert can_guardian_read_children; le périmètre vient de l'identité authentifiée.
+      description: >-
+        Requiert can_guardian_read_children, y compris pour un membre du personnel
+        ou administrateur également tuteur. Le périmètre vient des liens du compte
+        authentifié, conservés après un changement de login du personnel.
       operationId: getMyChildren
       security:
         - bearerAuth: []
@@ -2998,6 +3864,11 @@ paths:
     post:
       tags: [Contenus pédagogiques]
       summary: Créer un contenu brouillon
+      description: >-
+        Requiert can_learning_content_create et le périmètre de gestion de la classe.
+        La classe et l'année de l'URL sont obligatoires et actives. subjectId est
+        obligatoire et doit désigner une matière affectée à cette classe dans le
+        même établissement, pour LESSON comme pour ASSIGNMENT.
       operationId: createLearningContent
       security: [{bearerAuth: []}]
       parameters:
@@ -3011,7 +3882,8 @@ paths:
             schema: {$ref: '#/components/schemas/LearningContentRequest'}
       responses:
         '201': {description: Brouillon créé.}
-        '400': {description: Corps, type, sujet ou date limite invalide.}
+        '400': {description: Corps, type, UUID ou date limite invalide ; subjectId absent/nul ou matière non affectée à la classe.}
+        '401': {description: JWT absent, invalide ou expiré.}
         '403': {description: Permission ou licence absente.}
         '404': {description: Classe ou année introuvable.}
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}:
@@ -3032,6 +3904,10 @@ paths:
     put:
       tags: [Contenus pédagogiques]
       summary: Mettre à jour un contenu non archivé
+      description: >-
+        Requiert can_learning_content_update. subjectId est obligatoire et son
+        affectation active à la classe est vérifiée à nouveau. Le type et la classe
+        du contenu ne peuvent pas changer. Une modification le replace en DRAFT.
       operationId: updateLearningContent
       security: [{bearerAuth: []}]
       parameters:
@@ -3046,14 +3922,19 @@ paths:
             schema: {$ref: '#/components/schemas/LearningContentRequest'}
       responses:
         '200': {description: Contenu mis à jour.}
-        '400': {description: Requête invalide.}
+        '400': {description: Requête ou type modifié invalide ; subjectId absent/nul ou matière non affectée à la classe.}
+        '401': {description: JWT absent, invalide ou expiré.}
         '403': {description: Permission absente ou hors périmètre.}
         '404': {description: Contenu introuvable.}
-        '409': {description: État incompatible ou type modifié.}
+        '409': {description: État incompatible ou conflit d'intégrité.}
   /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/publish:
     post:
       tags: [Contenus pédagogiques]
       summary: Publier un brouillon
+      description: >-
+        Requiert can_learning_content_publish. Vérifie à nouveau que la matière du
+        contenu est affectée à la classe avant publication. Aucun corps ni paramètre
+        de requête ; la classe, l'année et le contenu sont identifiés dans l'URL.
       operationId: publishLearningContent
       security: [{bearerAuth: []}]
       parameters:
@@ -3063,6 +3944,8 @@ paths:
         - {name: contentId, in: path, required: true, schema: {type: string, format: uuid}}
       responses:
         '200': {description: Contenu publié.}
+        '400': {description: Matière absente ou qui n'est plus affectée à la classe.}
+        '401': {description: JWT absent, invalide ou expiré.}
         '403': {description: Permission absente.}
         '404': {description: Contenu introuvable.}
         '409': {description: Le contenu n'est pas un brouillon.}
@@ -3322,6 +4205,566 @@ components:
       bearerFormat: JWT
       description: JWT obtenu par POST /api/v1/login.
   schemas:
+    SchoolYearRolloverFeeOverride:
+      type: object
+      properties:
+        dueDate:
+          type: string
+          format: date
+          description: Échéance explicite dans l’année cible.
+        feeTypeId:
+          type: string
+          format: uuid
+          description: Type actif du même établissement, pour remplacer notamment un type
+            archivé.
+    SchoolYearRolloverRequest:
+      type: object
+      properties:
+        sourceAcademicYearId:
+          type: string
+          format: uuid
+          description: Identifiant de la précédente disponible retournée par le GET.
+        classroomIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          minItems: 1
+          maxItems: 200
+          uniqueItems: true
+          description: Salles sélectionnées de la source, même archivées.
+        includeAnnualFees:
+          type:
+          - boolean
+          - 'null'
+          default: true
+          description: 'Inclure les frais annuels. Omission ou null : true. Les frais
+            des classes sélectionnées sont toujours repris.'
+        feeOverrides:
+          type: object
+          maxProperties: 200
+          propertyNames:
+            type: string
+            format: uuid
+          additionalProperties:
+            "$ref": "#/components/schemas/SchoolYearRolloverFeeOverride"
+          description: 'Clé : UUID de frais source effectivement retenu. Aucune modification
+            de la définition source.'
+      required:
+      - sourceAcademicYearId
+      - classroomIds
+    SchoolYearRolloverClassroom:
+      type: object
+      properties:
+        classroom:
+          "$ref": "#/components/schemas/ClassroomResponse"
+        schoolClass:
+          "$ref": "#/components/schemas/SchoolClassResponse"
+        subjects:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SubjectResponse"
+      required:
+      - classroom
+      - schoolClass
+      - subjects
+    SchoolYearRolloverPreview:
+      type: object
+      properties:
+        targetYear:
+          "$ref": "#/components/schemas/AcademicYearResponse"
+        sourceYear:
+          oneOf:
+          - "$ref": "#/components/schemas/AcademicYearResponse"
+          - type: 'null'
+          description: Dernière année disponible finissant avant le début de la cible,
+            même archivée ; null si absente.
+        classrooms:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SchoolYearRolloverClassroom"
+        financeAvailable:
+          type: boolean
+          description: Licence TUITION active. Les listes financières sont vides sinon.
+        fees:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TuitionFeeResponse"
+          description: Définitions actives hors frais individuels, sans charge élève.
+        feeTypes:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TuitionFeeTypeResponse"
+          description: Configuration active commune aux années de l’établissement.
+        paymentMethods:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TuitionPaymentMethodResponse"
+          description: Modes actifs communs aux années, réutilisés sans duplication.
+      required:
+      - targetYear
+      - sourceYear
+      - classrooms
+      - financeAvailable
+      - fees
+      - feeTypes
+      - paymentMethods
+    SchoolYearRolloverLink:
+      type: object
+      properties:
+        sourceId:
+          type: string
+          format: uuid
+        targetId:
+          type: string
+          format: uuid
+        created:
+          type: boolean
+          description: false si réutilisé, y compris si des classes sont ajoutées à un
+            frais existant.
+      required:
+      - sourceId
+      - targetId
+      - created
+    SchoolYearRolloverResponse:
+      type: object
+      properties:
+        sourceAcademicYearId:
+          type: string
+          format: uuid
+        targetAcademicYearId:
+          type: string
+          format: uuid
+        classes:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SchoolYearRolloverLink"
+        classrooms:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SchoolYearRolloverLink"
+        subjectAssignmentsCreated:
+          type: integer
+          minimum: 0
+          description: Affectations créées ou réactivées.
+        skippedSubjectIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+          description: Matières affectées activement dans la source mais devenues inactives/absentes
+            du catalogue.
+        fees:
+          type: array
+          items:
+            "$ref": "#/components/schemas/SchoolYearRolloverLink"
+        createdBy:
+          type: string
+      required:
+      - sourceAcademicYearId
+      - targetAcademicYearId
+      - classes
+      - classrooms
+      - subjectAssignmentsCreated
+      - skippedSubjectIds
+      - fees
+      - createdBy
+    TimetableDayOfWeek:
+      type: string
+      enum:
+      - MONDAY
+      - TUESDAY
+      - WEDNESDAY
+      - THURSDAY
+      - FRIDAY
+      - SATURDAY
+      - SUNDAY
+    TimetableEntryRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - subjectId
+      - dayOfWeek
+      - startTime
+      - endTime
+      properties:
+        subjectId:
+          type: string
+          format: uuid
+          description: Matière active affectée à la classe de cette salle.
+        teacherId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Personnel actif de cette école, ou null pour enseignant à affecter.
+        dayOfWeek:
+          "$ref": "#/components/schemas/TimetableDayOfWeek"
+        startTime:
+          type: string
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d(:00)?$"
+          description: 'Heure locale en minutes entières: HH:mm ou HH:mm:00.'
+        endTime:
+          type: string
+          pattern: "^([01]\\d|2[0-3]):[0-5]\\d(:00)?$"
+          description: Fin strictement après le début dans la même journée.
+        validFrom:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: Début inclusif dans l’année. Omis ou null reprend le début de l’année.
+        validUntil:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: Fin inclusive dans l’année. Omis ou null reprend la fin de l’année.
+            Au moins une occurrence du jour doit être incluse.
+        roomCode:
+          type:
+          - string
+          - 'null'
+          maxLength: 40
+          description: Local physique facultatif; nettoyé et mis en majuscules. Vide ou
+            blanc devient null.
+    TimetableEntryResponse:
+      type: object
+      required:
+      - id
+      - establishmentId
+      - academicYearId
+      - schoolClassId
+      - classroomId
+      - subjectId
+      - teacherId
+      - dayOfWeek
+      - startTime
+      - endTime
+      - validFrom
+      - validUntil
+      - roomCode
+      - enabled
+      - copiedFromId
+      - createdBy
+      - updatedBy
+      - createdAt
+      - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        establishmentId:
+          type: string
+          format: uuid
+        academicYearId:
+          type: string
+          format: uuid
+        schoolClassId:
+          type: string
+          format: uuid
+        classroomId:
+          type: string
+          format: uuid
+        subjectId:
+          type: string
+          format: uuid
+          description: Matière active affectée à la classe de cette salle.
+        teacherId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Personnel actif de cette école, ou null pour enseignant à affecter.
+        dayOfWeek:
+          "$ref": "#/components/schemas/TimetableDayOfWeek"
+        startTime:
+          type: string
+          example: '08:00:00'
+        endTime:
+          type: string
+          example: '09:00:00'
+        validFrom:
+          type: string
+          format: date
+        validUntil:
+          type: string
+          format: date
+        roomCode:
+          type:
+          - string
+          - 'null'
+          maxLength: 40
+          description: Local physique facultatif; nettoyé et mis en majuscules. Vide ou
+            blanc devient null.
+        enabled:
+          type: boolean
+        copiedFromId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CopyTimetableRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - targetClassroomId
+      properties:
+        targetClassroomId:
+          type: string
+          format: uuid
+          description: Autre salle active de cette école et de cette année.
+        replaceExisting:
+          type:
+          - boolean
+          - 'null'
+          default: false
+          description: true archive tous les créneaux actifs de la cible avant copie.
+            Exige aussi can_timetable_delete.
+        copyTeachers:
+          type:
+          - boolean
+          - 'null'
+          default: false
+          description: Conserve les enseignants source sauf mapping explicite; contrôle
+            de conflit avec la source inclus.
+        copyRoomCodes:
+          type:
+          - boolean
+          - 'null'
+          default: false
+          description: Conserve les locaux physiques source et vérifie leur disponibilité.
+        validFrom:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: Surcharge du début de période de toutes les copies. Omission/null
+            conserve les dates source.
+        validUntil:
+          type:
+          - string
+          - 'null'
+          format: date
+          description: Surcharge de la fin de période de toutes les copies. Omission/null
+            conserve les dates source.
+        teacherMappings:
+          type:
+          - object
+          - 'null'
+          maxProperties: 100
+          propertyNames:
+            format: uuid
+          additionalProperties:
+            type: string
+            format: uuid
+          description: UUID enseignant source → UUID enseignant destination actif dans
+            cette école. Les sources doivent figurer dans le planning; pas de valeurs
+            nulles. Prime sur copyTeachers.
+    TimetableDayResponse:
+      type: object
+      required:
+      - date
+      - withinAcademicYear
+      - nonWorkingDay
+      - entries
+      properties:
+        date:
+          type: string
+          format: date
+        withinAcademicYear:
+          type: boolean
+        nonWorkingDay:
+          type:
+          - string
+          - 'null'
+          description: Libellé de fermeture; null si non fermé.
+        entries:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TimetableEntryResponse"
+    TimetableWeekResponse:
+      type: object
+      required:
+      - startsOn
+      - endsOn
+      - days
+      properties:
+        startsOn:
+          type: string
+          format: date
+          description: Lundi de la semaine.
+        endsOn:
+          type: string
+          format: date
+          description: Dimanche.
+        days:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TimetableDayResponse"
+          minItems: 7
+          maxItems: 7
+    TimetableNonWorkingDay:
+      type: object
+      additionalProperties: false
+      required:
+      - date
+      - name
+      properties:
+        date:
+          type: string
+          format: date
+          description: Date unique dans l’année scolaire.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+          description: Nom non blanc, nettoyé.
+    TimetableNonWorkingDaysRequest:
+      type: object
+      additionalProperties: false
+      required:
+      - days
+      properties:
+        days:
+          type: array
+          items:
+            "$ref": "#/components/schemas/TimetableNonWorkingDay"
+          maxItems: 730
+    DashboardCount:
+      type: integer
+      format: int64
+      minimum: 0
+    DashboardResponse:
+      type: object
+      required: [scope, generatedAt, platform, establishment]
+      properties:
+        scope: {type: string, enum: [PLATFORM, ESTABLISHMENT]}
+        generatedAt: {type: string, format: date-time}
+        platform:
+          description: Renseigné seulement pour ADMIN.
+          oneOf:
+            - {$ref: '#/components/schemas/PlatformDashboardSummary'}
+            - {type: 'null'}
+        establishment:
+          description: Renseigné seulement pour l'administrateur de l'établissement authentifié.
+          oneOf:
+            - {$ref: '#/components/schemas/EstablishmentDashboardSummary'}
+            - {type: 'null'}
+    PlatformDashboardSummary:
+      type: object
+      required: [totalEstablishments, activeEstablishments, disabledEstablishments, activeLicenses, suspendedLicenses, expiredLicenses, upcomingLicenses, establishmentsWithoutActiveLicense]
+      properties:
+        totalEstablishments: {$ref: '#/components/schemas/DashboardCount'}
+        activeEstablishments: {$ref: '#/components/schemas/DashboardCount'}
+        disabledEstablishments: {$ref: '#/components/schemas/DashboardCount'}
+        activeLicenses: {$ref: '#/components/schemas/DashboardCount'}
+        suspendedLicenses: {$ref: '#/components/schemas/DashboardCount'}
+        expiredLicenses: {$ref: '#/components/schemas/DashboardCount'}
+        upcomingLicenses: {$ref: '#/components/schemas/DashboardCount'}
+        establishmentsWithoutActiveLicense: {$ref: '#/components/schemas/DashboardCount'}
+    EstablishmentDashboardSummary:
+      type: object
+      required: [id, name, academicYear, license, counts, classes, attendance, finance, learning]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        academicYear:
+          oneOf:
+            - {$ref: '#/components/schemas/DashboardAcademicYear'}
+            - {type: 'null'}
+        license: {$ref: '#/components/schemas/DashboardLicense'}
+        counts: {$ref: '#/components/schemas/DashboardSchoolCounts'}
+        classes:
+          type: array
+          items: {$ref: '#/components/schemas/DashboardClassEnrollment'}
+        attendance:
+          oneOf:
+            - {$ref: '#/components/schemas/DashboardAttendance'}
+            - {type: 'null'}
+        finance:
+          type: [array, 'null']
+          items: {$ref: '#/components/schemas/DashboardCurrencyTotals'}
+        learning:
+          oneOf:
+            - {$ref: '#/components/schemas/DashboardLearning'}
+            - {type: 'null'}
+    DashboardAcademicYear:
+      type: object
+      required: [id, name, startsOn, endsOn]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        startsOn: {type: string, format: date}
+        endsOn: {type: string, format: date}
+    DashboardLicense:
+      type: object
+      required: [state, offerCode, validFrom, validUntil, features]
+      properties:
+        state: {type: string, enum: [ACTIVE, SUSPENDED, EXPIRED, UPCOMING, UNLICENSED]}
+        offerCode: {type: [string, 'null']}
+        validFrom: {type: [string, 'null'], format: date-time}
+        validUntil: {type: [string, 'null'], format: date-time}
+        features:
+          type: array
+          items: {$ref: '#/components/schemas/LicenseFeature'}
+    DashboardSchoolCounts:
+      type: object
+      required: [students, employees, subjects, classes, enrollments]
+      properties:
+        students: {$ref: '#/components/schemas/DashboardCount'}
+        employees: {$ref: '#/components/schemas/DashboardCount'}
+        subjects: {$ref: '#/components/schemas/DashboardCount'}
+        classes: {$ref: '#/components/schemas/DashboardCount'}
+        enrollments: {$ref: '#/components/schemas/DashboardCount'}
+    DashboardClassEnrollment:
+      type: object
+      required: [id, code, name, series, students]
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string}
+        name: {type: string}
+        series:
+          type: [string, 'null']
+          maxLength: 100
+          description: Série facultative de la classe.
+        students: {$ref: '#/components/schemas/DashboardCount'}
+    DashboardAttendance:
+      type: object
+      required: [date, present, absent, justifiedAbsent, notRecorded]
+      properties:
+        date: {type: string, format: date}
+        present: {$ref: '#/components/schemas/DashboardCount'}
+        absent: {$ref: '#/components/schemas/DashboardCount'}
+        justifiedAbsent: {$ref: '#/components/schemas/DashboardCount'}
+        notRecorded: {$ref: '#/components/schemas/DashboardCount'}
+    DashboardCurrencyTotals:
+      type: object
+      required: [currency, amountBilled, amountPaid, balance, overdueBalance]
+      properties:
+        currency: {type: string}
+        amountBilled: {type: number}
+        amountPaid: {type: number}
+        balance: {type: number}
+        overdueBalance: {type: number}
+    DashboardLearning:
+      type: object
+      required: [draftLessons, publishedLessons, draftAssignments, publishedAssignments]
+      properties:
+        draftLessons: {$ref: '#/components/schemas/DashboardCount'}
+        publishedLessons: {$ref: '#/components/schemas/DashboardCount'}
+        draftAssignments: {$ref: '#/components/schemas/DashboardCount'}
+        publishedAssignments: {$ref: '#/components/schemas/DashboardCount'}
     LearningContentType:
       type: string
       enum: [LESSON, ASSIGNMENT]
@@ -3337,7 +4780,7 @@ components:
     LearningContentRequest:
       type: object
       additionalProperties: false
-      required: [type, title]
+      required: [type, title, subjectId]
       properties:
         type:
           $ref: '#/components/schemas/LearningContentType'
@@ -3352,20 +4795,21 @@ components:
           type: [string, 'null']
           maxLength: 100000
         subjectId:
-          type: [string, 'null']
+          type: string
           format: uuid
+          description: Matière obligatoire affectée à la classe de l'URL dans le même établissement.
         dueDate:
           type: [string, 'null']
           format: date
     LearningContentResponse:
       type: object
-      required: [id, establishmentId, academicYearId, schoolClassId, type, title, status, createdAt, updatedAt]
+      required: [id, establishmentId, academicYearId, schoolClassId, subjectId, type, title, status, createdAt, updatedAt]
       properties:
         id: {type: string, format: uuid}
         establishmentId: {type: string, format: uuid}
         academicYearId: {type: string, format: uuid}
         schoolClassId: {type: string, format: uuid}
-        subjectId: {type: [string, 'null'], format: uuid}
+        subjectId: {type: string, format: uuid}
         type: {$ref: '#/components/schemas/LearningContentType'}
         title: {type: string}
         description: {type: [string, 'null']}
@@ -3780,6 +5224,61 @@ components:
         schoolClassId:
           type: string
           format: uuid
+        classroomId:
+          type: [string, 'null']
+          format: uuid
+          description: Salle active de la classe. Omission ou null acceptés uniquement si une seule salle est active.
+        acceptAdvance:
+          type: [boolean, 'null']
+          default: false
+          description: Absent, null ou false exige de solder tous les frais applicables. true accepte une avance mais impose au moins un paiement positif sur un frais applicable. La décision est conservée.
+        payments:
+          type: [array, 'null']
+          maxItems: 100
+          description: Versements manuels enregistrés avec l'inscription. Frais actifs applicables uniquement, un versement par feeId. Omission ou null signifie liste vide. Les paiements déjà enregistrés sont reconnus sans être recréés. Un échec annule toutes les nouvelles écritures.
+          items: {$ref: '#/components/schemas/EnrollmentPaymentRequest'}
+    EnrollmentPaymentRequest:
+      type: object
+      additionalProperties: false
+      required: [feeId, amount, paymentMethodCode]
+      properties:
+        feeId: {type: string, format: uuid, description: Définition de frais applicable à cet élève et cette classe pour cette année; unique dans la requête.}
+        amount: {type: number, exclusiveMinimum: 0, maximum: 9999999999.99, multipleOf: 0.01, description: Montant dans la devise du frais; ne peut pas dépasser le solde.}
+        paymentMethodCode: {type: string, minLength: 1, maxLength: 40, description: Moyen actif de cet établissement; normalisé en majuscules.}
+        reference: {type: [string, 'null'], maxLength: 120, description: Référence facultative nettoyée; vide ou blanche devient null.}
+    EnrollmentPaymentResponse:
+      type: object
+      required: [id, feeId, chargeId, receiptNumber, amount, currency, paymentMethodCode, paymentMethodName, reference, receivedAt, recordedBy, totalPaid, balance]
+      properties:
+        id: {type: string, format: uuid}
+        feeId: {type: string, format: uuid}
+        chargeId: {type: string, format: uuid}
+        receiptNumber: {type: string}
+        amount: {type: number}
+        currency: {type: string}
+        paymentMethodCode: {type: string}
+        paymentMethodName: {type: string}
+        reference: {type: [string, 'null']}
+        receivedAt: {type: string, format: date-time}
+        recordedBy: {type: string}
+        totalPaid: {type: number, description: Total versé pour cette créance après ce paiement.}
+        balance: {type: number, description: Solde restant de cette créance dans sa devise.}
+    EnrollmentCreationResponse:
+      allOf:
+        - {$ref: '#/components/schemas/EnrollmentResponse'}
+        - type: object
+          required: [payments]
+          properties:
+            payments:
+              type: array
+              description: Paiements créés par cette inscription; tableau vide si aucun nouvel encaissement.
+              items: {$ref: '#/components/schemas/EnrollmentPaymentResponse'}
+    ChangeEnrollmentClassroomRequest:
+      type: object
+      additionalProperties: false
+      required: [classroomId]
+      properties:
+        classroomId: {type: string, format: uuid, description: Nouvelle salle active de la même classe.}
     EnrollmentResponse:
       type: object
       required:
@@ -3788,6 +5287,9 @@ components:
         - studentId
         - academicYearId
         - schoolClassId
+        - classroomId
+        - advanceAccepted
+        - paymentDecisionBy
         - createdAt
       properties:
         id:
@@ -3805,6 +5307,15 @@ components:
         schoolClassId:
           type: string
           format: uuid
+        classroomId:
+          type: string
+          format: uuid
+        advanceAccepted:
+          type: boolean
+          description: Autorisation d'avance décidée à la création, conservée après les paiements ultérieurs. false pour les inscriptions antérieures à V8, sans réévaluation des paiements historiques.
+        paymentDecisionBy:
+          type: [string, 'null']
+          description: Utilisateur authentifié ayant créé l'inscription et enregistré la décision. null pour les anciennes inscriptions.
         createdAt:
           type: string
           format: date-time
@@ -3907,6 +5418,12 @@ components:
             - string
             - 'null'
           format: uuid
+        schoolClassIds:
+          type: [array, 'null']
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, format: uuid}
+          description: Classes actives de la même année et du même établissement. Incompatible avec schoolClassId et studentId.
     TuitionFeeResponse:
       type: object
       required:
@@ -3921,6 +5438,7 @@ components:
         - feeTypeCode
         - feeTypeName
         - scope
+        - schoolClassIds
         - createdAt
       properties:
         id:
@@ -3959,6 +5477,12 @@ components:
             - string
             - 'null'
           format: uuid
+          description: Champ historique ; UUID si une seule classe est ciblée, sinon null. Utiliser schoolClassIds pour la sélection complète.
+        schoolClassIds:
+          type: array
+          uniqueItems: true
+          items: {type: string, format: uuid}
+          description: Classes ciblées ; vide pour un frais annuel ou individuel. scope vaut SCHOOL_CLASS pour une ou plusieurs classes.
         studentId:
           type:
             - string
@@ -4620,6 +6144,32 @@ components:
         updatedAt:
           type: string
           format: date-time
+    CreateClassroomRequest:
+      type: object
+      additionalProperties: false
+      required: [code, name]
+      properties:
+        code: {type: string, minLength: 1, maxLength: 40, description: Code non blanc nettoyé et mis en majuscules. Unique dans la classe.}
+        name: {type: string, minLength: 1, maxLength: 100, description: Nom non blanc nettoyé.}
+    UpdateClassroomRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        code: {type: [string, 'null'], minLength: 1, maxLength: 40, description: Code non blanc si fourni; omis ou null conserve la valeur.}
+        name: {type: [string, 'null'], minLength: 1, maxLength: 100, description: Nom non blanc si fourni; omis ou null conserve la valeur.}
+    ClassroomResponse:
+      type: object
+      required: [id, establishmentId, academicYearId, schoolClassId, code, name, enabled, createdAt, updatedAt]
+      properties:
+        id: {type: string, format: uuid}
+        establishmentId: {type: string, format: uuid}
+        academicYearId: {type: string, format: uuid}
+        schoolClassId: {type: string, format: uuid}
+        code: {type: string}
+        name: {type: string}
+        enabled: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     CreateSchoolClassRequest:
       type: object
       additionalProperties: false
@@ -4635,21 +6185,30 @@ components:
           type: string
           minLength: 1
           maxLength: 100
+        series:
+          type: [string, 'null']
+          maxLength: 100
+          description: Libellé libre facultatif. Espaces périphériques retirés; null, chaîne vide ou blanche signifie sans série.
+          examples: [Scientifique, Littéraire]
     UpdateSchoolClassRequest:
       type: object
       additionalProperties: false
-      required:
-        - code
-        - name
       properties:
         code:
-          type: string
+          type: [string, 'null']
           minLength: 1
           maxLength: 40
+          description: Code non blanc si renseigné; omis ou null conserve le code actuel.
         name:
-          type: string
+          type: [string, 'null']
           minLength: 1
           maxLength: 100
+          description: Nom non blanc si renseigné; omis ou null conserve le nom actuel.
+        series:
+          type: [string, 'null']
+          maxLength: 100
+          description: Omis ou null conserve la série actuelle. Une chaîne vide ou blanche retire la série. Espaces périphériques retirés.
+          examples: [Scientifique, Littéraire, '']
     SchoolClassResponse:
       type: object
       required:
@@ -4658,6 +6217,7 @@ components:
         - academicYearId
         - code
         - name
+        - series
         - enabled
         - createdAt
         - updatedAt
@@ -4675,6 +6235,10 @@ components:
           type: string
         name:
           type: string
+        series:
+          type: [string, 'null']
+          maxLength: 100
+          description: Libellé de série facultatif; null pour une classe sans série.
         enabled:
           type: boolean
         createdAt:

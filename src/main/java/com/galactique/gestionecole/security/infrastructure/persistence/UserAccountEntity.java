@@ -114,7 +114,13 @@ public class UserAccountEntity {
 
 	void updateEmployeeAccount(String username, Set<RoleEntity> roles) {
 		this.username = username;
-		this.roles = new LinkedHashSet<>(roles);
+		Set<RoleEntity> updatedRoles = new LinkedHashSet<>(roles);
+		this.roles.stream().filter(role -> "PARENT".equals(role.getCode())).forEach(updatedRoles::add);
+		this.roles = updatedRoles;
+	}
+
+	void addRole(RoleEntity role) {
+		this.roles.add(role);
 	}
 
 	void disable() {

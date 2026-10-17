@@ -11,6 +11,7 @@ import jakarta.persistence.LockModeType;
 
 public interface GuardianJpaRepository extends JpaRepository<GuardianEntity, UUID> {
 	Optional<GuardianEntity> findByEmailIgnoreCase(String email);
+	Optional<GuardianEntity> findByUserAccountId(UUID userAccountId);
 
 	@Lock(LockModeType.PESSIMISTIC_WRITE)
 	@Query("select guardian from GuardianEntity guardian where guardian.id = :id")

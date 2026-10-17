@@ -37,10 +37,12 @@ public class SchoolCalendarController {
 
 	/** Retourne les années scolaires actives de l’établissement. */
 	@GetMapping
-	@PreAuthorize("hasAuthority('can_academic_year_read')")
+	@PreAuthorize("hasAuthority('can_academic_year_read') or hasAuthority('can_guardian_read_children')")
 	public List<AcademicYearResponse> getAcademicYears(
 		@PathVariable UUID establishmentId, Authentication authentication) {
-		return schoolCalendarApplicationService.findYears(establishmentId, toActor(authentication)).stream()
+		return schoolCalendarApplicationService.findYears(establishmentId, toActor(authentication),
+			hasAuthority(authentication, "can_academic_year_read"),
+			hasAuthority(authentication, "can_guardian_read_children")).stream()
 			.map(AcademicYearResponse::from)
 			.toList();
 	}

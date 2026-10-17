@@ -14,6 +14,8 @@ import com.galactique.gestionecole.employees.application.EmployeeApplicationServ
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
 import com.galactique.gestionecole.schoolclasses.domain.ClassSubjectRepository;
+import com.galactique.gestionecole.schoolclasses.domain.Classroom;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassSubject;
@@ -30,6 +32,7 @@ public class SchoolCatalogApplicationService {
 	private final AcademicYearRepository academicYearRepository;
 	private final EmployeeApplicationService employeeApplicationService;
 	private final LicenseApplicationService licenseApplicationService;
+	private final ClassroomRepository classroomRepository;
 
 	public SchoolCatalogApplicationService(
 		SubjectRepository subjectRepository,
@@ -37,13 +40,15 @@ public class SchoolCatalogApplicationService {
 		ClassSubjectRepository classSubjectRepository,
 		AcademicYearRepository academicYearRepository,
 		EmployeeApplicationService employeeApplicationService,
-		LicenseApplicationService licenseApplicationService) {
+		LicenseApplicationService licenseApplicationService,
+		ClassroomRepository classroomRepository) {
 		this.subjectRepository = subjectRepository;
 		this.schoolClassRepository = schoolClassRepository;
 		this.classSubjectRepository = classSubjectRepository;
 		this.academicYearRepository = academicYearRepository;
 		this.employeeApplicationService = employeeApplicationService;
 		this.licenseApplicationService = licenseApplicationService;
+		this.classroomRepository = classroomRepository;
 	}
 
 	@Transactional(readOnly = true)
@@ -132,7 +137,10 @@ public class SchoolCatalogApplicationService {
 			throw new SchoolCatalogConflictException();
 		}
 		try {
-			return schoolClassRepository.save(establishmentId, academicYearId, code, command.name());
+			SchoolClass schoolClass = schoolClassRepository.save(establishmentId, academicYearId, code, command.name(),
+				SchoolClass.normalizeSeries(command.series()));
+			classroomRepository.save(establishmentId, academicYearId, schoolClass.id(), "DEFAULT", "Salle principale");
+			return schoolClass;
 		} catch (DataIntegrityViolationException exception) {
 			throw new SchoolCatalogConflictException();
 		}
@@ -146,11 +154,12 @@ public class SchoolCatalogApplicationService {
 		SchoolClass current = findClass(establishmentId, academicYearId, schoolClassId);
 		String code = command.code() == null ? current.code() : normalizeCode(command.code());
 		String name = command.name() == null ? current.name() : command.name();
+		String series = command.series() == null ? current.series() : SchoolClass.normalizeSeries(command.series());
 		if (schoolClassRepository.existsByAcademicYearIdAndCodeAndIdNot(academicYearId, code, schoolClassId)) {
 			throw new SchoolCatalogConflictException();
 		}
 		try {
-			return schoolClassRepository.update(schoolClassId, establishmentId, academicYearId, code, name);
+			return schoolClassRepository.update(schoolClassId, establishmentId, academicYearId, code, name, series);
 		} catch (DataIntegrityViolationException exception) {
 			throw new SchoolCatalogConflictException();
 		}
@@ -160,8 +169,86 @@ public class SchoolCatalogApplicationService {
 	public void archiveClass(UUID establishmentId, UUID academicYearId, UUID schoolClassId, EmployeeActor actor) {
 		requireEstablishment(establishmentId, actor);
 		findAcademicYear(establishmentId, academicYearId);
-		findClass(establishmentId, academicYearId, schoolClassId);
+		lockClass(establishmentId, academicYearId, schoolClassId);
 		schoolClassRepository.archive(schoolClassId, establishmentId, academicYearId);
+	}
+
+	@Transactional(readOnly = true)
+	public List<Classroom> findClassrooms(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
+		EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		return classroomRepository.findAll(establishmentId, academicYearId, schoolClassId);
+	}
+
+	@Transactional(readOnly = true)
+	public Classroom findClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId, UUID classroomId,
+		EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		return requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId);
+	}
+
+	@Transactional
+	public Classroom createClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
+		String code, String name, EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		lockClass(establishmentId, academicYearId, schoolClassId);
+		try {
+			return classroomRepository.save(establishmentId, academicYearId, schoolClassId, normalizeCode(code), name);
+		} catch (DataIntegrityViolationException exception) {
+			throw new SchoolCatalogConflictException();
+		}
+	}
+
+	@Transactional
+	public Classroom updateClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId, UUID classroomId,
+		String code, String name, EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		lockClass(establishmentId, academicYearId, schoolClassId);
+		Classroom current = requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId);
+		try {
+			return classroomRepository.update(current, code == null ? current.code() : normalizeCode(code),
+				name == null ? current.name() : name);
+		} catch (DataIntegrityViolationException exception) {
+			throw new SchoolCatalogConflictException();
+		}
+	}
+
+	@Transactional
+	public void archiveClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId, UUID classroomId,
+		EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		lockClass(establishmentId, academicYearId, schoolClassId);
+		Classroom current = requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId);
+		if (classroomRepository.hasEnrollments(classroomId) || classroomRepository.hasTimetableEntries(classroomId)) {
+			throw new SchoolCatalogConflictException();
+		}
+		classroomRepository.archive(current);
+	}
+
+	/** Locks the class until the enclosing enrollment transaction commits. */
+	@Transactional
+	public Classroom resolveEnrollmentClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
+		UUID classroomId, EmployeeActor actor) {
+		findClass(establishmentId, academicYearId, schoolClassId, actor);
+		lockClass(establishmentId, academicYearId, schoolClassId);
+		if (classroomId != null) {
+			return requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId);
+		}
+		List<Classroom> classrooms = classroomRepository.findAll(establishmentId, academicYearId, schoolClassId);
+		if (classrooms.size() != 1) {
+			throw new IllegalArgumentException("classroomId is required unless the class has exactly one active classroom");
+		}
+		return classrooms.getFirst();
+	}
+
+	private Classroom requireClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId, UUID classroomId) {
+		return classroomRepository.findById(establishmentId, academicYearId, schoolClassId, classroomId)
+			.orElseThrow(SchoolCatalogNotFoundException::new);
+	}
+
+	private SchoolClass lockClass(UUID establishmentId, UUID academicYearId, UUID schoolClassId) {
+		return schoolClassRepository.findForUpdate(schoolClassId, establishmentId, academicYearId)
+			.orElseThrow(SchoolCatalogNotFoundException::new);
 	}
 
 	@Transactional(readOnly = true)

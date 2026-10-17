@@ -3,6 +3,7 @@ package com.galactique.gestionecole.tuition.api.dto;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.UUID;
+import java.util.List;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Digits;
@@ -18,5 +19,6 @@ public record CreateTuitionFeeRequest(
 	@NotNull LocalDate dueDate,
 	@NotNull UUID feeTypeId,
 	UUID schoolClassId,
-	UUID studentId) {
+	UUID studentId,
+	@Size(min = 1) List<@NotNull UUID> schoolClassIds) {
 }

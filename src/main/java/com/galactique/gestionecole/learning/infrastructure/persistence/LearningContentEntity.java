@@ -35,7 +35,7 @@ public class LearningContentEntity {
 	@Column(nullable = false)
 	private UUID schoolClassId;
 
-	@Column
+	@Column(nullable = false)
 	private UUID subjectId;
 
 	@Enumerated(EnumType.STRING)

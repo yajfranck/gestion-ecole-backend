@@ -73,9 +73,21 @@ export SMTP_PASSWORD='<mot-de-passe-application-yahoo>'
 
 Les paramètres `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_AUTH`, `SMTP_STARTTLS` et `EMPLOYEE_INVITATION_FROM` peuvent être surchargés par l’environnement. Ne pas inscrire de mot de passe dans les fichiers versionnés.
 
+L’hôte et le port des liens d’invitation du personnel (y compris le premier administrateur d’école) et des tuteurs sont configurables dans `src/main/resources/application.yaml` :
+
+```yaml
+app:
+  invitations:
+    scheme: ${INVITATION_SCHEME:http}
+    host: ${INVITATION_HOST:localhost}
+    port: ${INVITATION_PORT:3000}
+```
+
+`host` contient uniquement le nom de domaine ou l’adresse, sans protocole, port ni chemin. Par exemple, `scheme: https`, `host: ecole.example.org`, `port: 443` produisent `https://ecole.example.org:443/accept-invitation` pour le personnel et `/accept-guardian-invitation` pour les tuteurs, avec le token dans le fragment `#token=...`. Ces liens pointent vers le client web ; le port est celui du client web, indépendant de celui de l’API et du serveur SMTP. Les variables `EMPLOYEE_INVITATION_ACCEPT_URL` (ou l’ancienne `STAFF_INVITATION_ACCEPT_URL`) et `GUARDIAN_INVITATION_ACCEPT_URL` restent prioritaires pour remplacer une URL complète, notamment son chemin.
+
 | Rôle | Principales responsabilités |
 |---|---|
-| Administrateur plateforme (`ADMIN`) | Consulter la liste des établissements, créer un établissement et inviter son premier administrateur d’école |
+| Administrateur plateforme (`ADMIN`) | Consulter les établissements et le dashboard plateforme, créer un établissement et inviter son premier administrateur d’école |
 | Administrateur d’école | Configurer l’école, gérer les rôles et permissions locaux, les années, classes, utilisateurs, modules et paramètres |
 | Direction | Consulter les tableaux de bord et rapports, superviser les opérations |
 | Secrétariat | Gérer les dossiers, inscriptions, classes et communications administratives |
@@ -94,26 +106,33 @@ Le modèle doit permettre de préciser les droits fins sans multiplier inutileme
 - Informations légales, contacts et logo.
 - Sites ou campus si l’offre le permet.
 - Années scolaires, périodes, classes et matières.
+- Série facultative par classe (par exemple « Scientifique » ou « Littéraire »), définie librement dans les routes existantes de création et modification des classes via `series`. Plusieurs classes peuvent porter le même libellé ; les classes sans série restent possibles. La liste, la fiche de classe et les classes du dashboard exposent cette information.
+- Plusieurs salles/groupes par classe : une classe « Sixième » peut contenir « Sixième A » et « Sixième B ». Les salles sont gérées sous `classes/{schoolClassId}/classrooms` avec les permissions de gestion des classes. Chaque nouvelle classe reçoit une salle principale (`DEFAULT`), renommable. Une inscription annuelle référence une seule salle ; si plusieurs salles sont actives, `classroomId` doit être choisi explicitement. Le changement de salle dans la même classe conserve l’inscription, ses présences et ses frais. La liste des élèves d’une classe accepte le filtre `classroomId`. Ces groupes d’élèves ne représentent pas un inventaire de locaux physiques partagés.
 - Calendrier scolaire et jours non ouvrés.
-- Emplois du temps quotidiens et hebdomadaires par classe, avec modèles réutilisables.
+- Emplois du temps quotidiens et hebdomadaires par salle/groupe, avec duplication vers une autre salle.
 - Gestion des utilisateurs, invitations, rôles et désactivation d’accès.
 
-Un emploi du temps regroupe des créneaux récurrents associés à une classe, une matière, un enseignant, une salle, un jour de la semaine et des heures de début et de fin. Il est consultable à la journée ou à la semaine. Un modèle réutilisable peut être appliqué à une classe puis ajusté. L’application refuse les chevauchements pour une même classe, un même enseignant ou une même salle. Les jours non ouvrés du calendrier scolaire sont pris en compte. Ces emplois du temps récurrents sont distincts des séances ponctuelles de cours à distance.
+L’API des emplois du temps est exposée sous `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable`. Chaque créneau hebdomadaire associe la salle/groupe, une matière affectée à sa classe, un enseignant facultatif, un jour, des heures et une période de validité. Un `roomCode` facultatif désigne un local physique partagé, distinct du groupe d’élèves. La consultation comprend le modèle hebdomadaire et les vues `/day?date=...` et `/week?date=...`. Les jours non ouvrés sont configurables pour l’année sous `/school-years/{academicYearId}/timetable/non-working-days` et retirent les occurrences des vues datées. Ils ne libèrent pas les réservations du modèle hebdomadaire pour le contrôle des conflits.
+
+`POST .../timetable/copy` duplique les créneaux vers une salle de la même école et année. Par défaut, les enseignants et locaux physiques restent à affecter ; des options permettent de les conserver ou de réaffecter les enseignants. Le remplacement de la destination est explicite, soumis au droit de suppression et atomique. Les chevauchements sont refusés pour une même salle/groupe, un même enseignant ou un même local physique, y compris entre années qui se recouvrent. Deux salles distinctes d’une même classe peuvent avoir cours simultanément avec des ressources différentes. Les comptes du personnel doivent disposer des permissions `can_timetable_*` et de `SCHOOL_MANAGEMENT`. Les rôles et permissions sont revérifiés en base. Ces emplois du temps récurrents restent distincts des séances ponctuelles de cours à distance ; le contrat détaillé est dans `doc-api.md`.
 
 ### 4.2 Élèves, parents et inscriptions
 
 - Fiche élève avec numéro interne généré automatiquement et informations utiles à l’établissement. Le numéro est unique et immuable.
 - Un ou plusieurs parents/tuteurs par élève.
 - Un parent/tuteur peut être lié à plusieurs enfants.
-- Inscription à une année et une classe.
+- Toute personne peut être tuteur, sans condition de parenté ni restriction liée à son rôle : nouveau contact, tuteur existant, membre du personnel ou administrateur d’établissement. Un compte existant est réutilisé avec ses rôles et son mot de passe conservés ; l’accès tuteur s’ajoute à ses fonctions dans l’établissement.
+- Inscription à une année, une classe et une salle unique de cette classe.
+- L’inscription inclut le règlement des frais actifs applicables à l’élève (année, classe ou frais individuels). Le règlement intégral est exigé par défaut ; l’opérateur peut accepter explicitement une avance avec `acceptAdvance: true`, mais un paiement positif reste obligatoire. Sans frais applicables, aucun paiement n’est requis. L’endpoint existant d’inscription accepte `payments` (frais, montant, moyen de paiement, référence) et enregistre l’inscription, ses créances et les paiements dans une seule transaction. La réponse contient les paiements et leurs numéros de reçu. L’acceptation d’une avance et son auteur sont conservés. Encaisser lors de l’inscription exige aussi `can_payment_record` et la fonctionnalité `TUITION`.
 - Historique des inscriptions et changements de classe.
+- Consultation par les parents/tuteurs de toutes les années scolaires actives des établissements de leurs enfants liés, via la route existante de liste des années scolaires.
 - Statut du dossier : préinscrit, actif, transféré, sorti ou archivé.
 - Import initial de données depuis un fichier tabulaire et export autorisé.
 
 ### 4.3 Frais scolaires et encaissements
 
 - Catalogue de types de frais configurable par établissement; chaque frais est associé à un type actif.
-- Définition des frais par année, classe ou élève.
+- Définition des frais par année, pour une ou plusieurs classes simultanément, ou pour un élève. Un même frais peut cibler plusieurs classes avec un montant et une échéance communs.
 - Échéances, remises et ajustements autorisés.
 - Enregistrement des paiements et paiements partiels.
 - Modes de paiement configurables par l’école, avec libellés modifiables et désactivation logique sans effacer l’historique.
@@ -137,6 +156,7 @@ L’intégration directe à un opérateur de mobile money ou à une banque dépe
 Le module doit permettre aux enseignants de planifier et de communiquer des cours à distance. Pour le MVP, les visioconférences reposent sur un lien externe (par exemple un outil de visioconférence choisi par l’école), afin de ne pas construire immédiatement une infrastructure vidéo.
 
 - Planification d’une séance liée à une classe, une matière et un enseignant.
+- Chaque cours ou devoir pédagogique (`LESSON` / `ASSIGNMENT`) doit être rattaché à une classe d’une année scolaire et à une matière affectée à cette classe. La matière est obligatoire à la création, à la modification et vérifiée de nouveau à la publication.
 - Date, heure, durée, instructions et lien de visioconférence.
 - Partage de documents ou ressources pédagogiques.
 - Affichage des cours à venir et passés dans l’espace parent/élève autorisé.
@@ -159,6 +179,8 @@ Les enregistrements vidéo, la visioconférence intégrée, le suivi automatique
 Le modèle prévoit les matières, évaluations, notes, coefficients, périodes et règles de calcul configurables. Ce module peut être livré après le premier MVP si les règles locales de notation ne sont pas encore cadrées. Il ne faut pas intégrer de barème national en dur dans le code.
 
 ### 4.8 Tableaux de bord et rapports
+
+`GET /api/v1/dashboard` fournit une vue adaptée au compte authentifié avec `can_dashboard_read`. `ADMIN` reçoit les compteurs des établissements et des licences ; `ESTABLISHMENT_ADMIN` reçoit les effectifs, inscriptions par classe, présences, frais par devise, contenus pédagogiques et licence de son établissement uniquement. Les paramètres facultatifs `academicYearId` et `date` concernent la vue établissement ; aucun identifiant d’établissement fourni par le client ne change le périmètre. Les blocs présences, finances et contenus sont disponibles selon les fonctionnalités actives de la licence. Le contrat détaillé est décrit dans `doc-api.md`.
 
 - Effectifs par année et classe.
 - Suivi des inscriptions.
@@ -212,7 +234,7 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 
 1. Création d’un établissement et configuration de base.
 2. Gestion d’une année scolaire, des classes et des utilisateurs.
-3. Gestion des élèves, parents/tuteurs et inscriptions, actives dès leur création indépendamment du paiement.
+3. Gestion des élèves, parents/tuteurs et inscriptions validées avec le règlement intégral des frais applicables ou une avance explicitement acceptée ; inscription sans paiement si aucun frais ne s’applique.
 4. Paramétrage de la devise, des types de frais, des frais scolaires et des modes de paiement.
 5. Enregistrement des paiements scolaires, reçus et soldes impayés.
 6. Appel des présences par classe.
@@ -222,7 +244,9 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 10. Tableau de bord simple et export des données principales.
 11. Gestion des rôles, isolation des données entre écoles, journal d’audit des actions sensibles.
 12. Paramètres de référence et création d’un établissement avec invitation de son administrateur par `ADMIN`.
-13. Emplois du temps hebdomadaires par classe, avec modèles réutilisables, vues quotidiennes/hebdomadaires et détection des conflits.
+13. Emplois du temps hebdomadaires par salle/groupe, avec duplication, vues quotidiennes/hebdomadaires, jours non ouvrés et détection des conflits.
+
+14. Reprise sélective des salles de la dernière année scolaire disponible, avec classes/séries, matières et paramétrage financier uniquement (aucun report de créances, impayés ou paiements).
 
 ### Hors MVP / phases ultérieures
 
@@ -239,11 +263,11 @@ Le MVP doit permettre à une école pilote de gérer ses opérations essentielle
 - Une école ne peut consulter ni modifier les données d’une autre école, y compris en manipulant directement les identifiants d’une requête.
 - Un utilisateur sans permission ne peut pas exécuter l’action correspondante via l’API.
 - Le secrétariat peut inscrire un élève à une classe et associer ses tuteurs.
-- L’inscription à une classe est effective immédiatement; le solde des frais reste suivi indépendamment.
+- Une inscription avec frais est validée seulement après paiement intégral ou acceptation explicite d’une avance effectivement payée ; le solde restant est suivi. En cas d’échec, l’inscription, les créances et les paiements de la tentative sont annulés ensemble.
 - Le comptable peut enregistrer un paiement partiel et le solde dû est recalculé correctement.
 - Un reçu peut être retrouvé et exporté sans modifier l’historique du paiement.
 - Un enseignant peut enregistrer l’appel d’une classe et le parent autorisé voit l’information.
-- L’administrateur peut appliquer un modèle d’emploi du temps à une classe et consulter son planning hebdomadaire; un créneau incompatible avec la classe, l’enseignant ou la salle est refusé.
+- L’administrateur peut dupliquer un emploi du temps vers une autre salle/groupe et consulter son planning hebdomadaire ; un créneau incompatible avec la salle/groupe, l’enseignant ou le local physique est refusé, sans remplacement partiel de la destination.
 - Un enseignant peut programmer un cours à distance ; seuls les utilisateurs autorisés voient son lien et ses ressources.
 - L’opérateur peut activer, suspendre ou faire expirer un abonnement et consulter les quotas appliqués.
 - Les paramètres locaux sont contrôlés par les valeurs et règles permises par la plateforme.
@@ -317,9 +341,18 @@ Au 14 octobre 2026, Spring Boot 4.1.1 est stable ; Java 21 est compatible et Mav
 Les migrations initiales sont regroupées avant le premier déploiement :
 - `db/migration/V1__initial_schema_and_reference_data.sql` initialise le schéma et les données de référence, sans compte utilisateur ni données métier de test.
 - `db/migration-local/V2__seed_local_admin_account.sql` crée uniquement le compte de développement `admin-tech` avec son rôle `ADMIN`.
+- `db/migration/V3__require_learning_content_subject.sql` rend la matière obligatoire pour les cours et devoirs. Avant son application sur une base persistante, les contenus existants sans matière, y compris archivés, doivent recevoir une affectation explicite ; la migration n’invente aucune matière et ne supprime aucun contenu.
+- `db/migration/V4__allow_tuition_fees_for_multiple_classes.sql` ajoute les affectations multiples des frais aux classes et reprend les anciennes affectations à une classe, sans modifier les créances ni les paiements.
+- `db/migration/V5__grant_dashboard_read_to_administrators.sql` attribue `can_dashboard_read` à `ADMIN` et `ESTABLISHMENT_ADMIN`. Renouveler les jetons ou se reconnecter après la migration pour obtenir cette permission.
+- `db/migration/V6__add_optional_class_series.sql` ajoute `series` aux classes. Les classes existantes conservent leurs données et restent sans série jusqu’à une affectation explicite.
+- `db/migration/V7__add_classrooms_and_enrollment_assignment.sql` crée une salle principale pour chaque classe existante et y rattache ses inscriptions, sans changer leurs identifiants ni leur historique. Les clés étrangères garantissent l’appartenance de la salle à la bonne classe, année et école. `can_enrollment_update` permet de changer la salle dans une même classe ; elle est attribuée à `ESTABLISHMENT_ADMIN` (renouveler le jeton après migration).
+- `db/migration/V8__record_enrollment_payment_decision.sql` conserve la décision d’accepter une avance et son auteur pour les nouvelles inscriptions. Les inscriptions antérieures sont conservées sans inventer de paiement ni d’auteur : `advanceAccepted` vaut `false`, `paymentDecisionBy` reste `null`. La nouvelle exigence de paiement s’applique aux créations suivantes ; les frais ajoutés après une inscription sont suivis comme de nouvelles créances.
+- `db/migration/V9__add_classroom_timetables.sql` ajoute les créneaux par salle, leur provenance de copie, les jours non ouvrés et les permissions `can_timetable_read`, `can_timetable_create`, `can_timetable_update`, `can_timetable_delete`, `can_timetable_copy` attribuées à `ESTABLISHMENT_ADMIN`. Renouveler le jeton après migration. Aucun emploi du temps de test n’est créé. L’archivage d’une salle ayant des créneaux actifs est refusé.
+- `db/migration/V10__add_school_year_rollover_links.sql` conserve la provenance des classes, salles et grilles de frais reprises ; elle attribue `can_school_year_rollover` à `ESTABLISHMENT_ADMIN` (renouveler le JWT). GET puis POST `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover` préparent et exécutent la copie vers l’année cible. La précédente disponible peut être archivée. La reprise est atomique et répétable, les frais multiclasse sont étendus au fil des lots ; les types/modes de paiement communs à l’établissement sont réutilisés. Les échéances sont décalées et ajustables. Aucun mouvement financier ni inscription n’est repris ou créé ; les élèves déjà inscrits ne sont pas facturés automatiquement. Détails et exemples dans `doc-api.md` et `swagger.yaml`.
 
 Le jeu de test VOGT a été retiré : aucun établissement, élève ou licence de test n'est inséré au démarrage.
 Le profil `local` utilise H2 en mémoire : arrêter puis redémarrer le processus recrée la base avec ces migrations.
+La version H2 est fixée à `2.5.250` via la propriété Maven `h2.version` pour corriger l’échec des contraintes `CHECK (... IN ...)` entre plusieurs connexions présent dans `2.4.240` ([correctif H2](https://github.com/h2database/h2database/pull/4311)).
 Une base persistante ayant exécuté les anciennes migrations n'est pas compatible avec cette nouvelle baseline : utiliser une base neuve, sans contourner les contrôles Flyway ni supprimer automatiquement des données.
 Démarrage : `./mvnw -Plocal spring-boot:run -Dspring-boot.run.profiles=local`.
 

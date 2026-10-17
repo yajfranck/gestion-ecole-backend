@@ -24,6 +24,6 @@ exemple : can_user_read
 
 11. Lors des implémentationns des endpoints, il faut mettres les classes controller dans un package a part; les dto (record) dans un autre package; de même pour la gestion des exceptions.
 
-
+12. Apres chaque implémentation, lance les tests unitaires pour vérifier que tout fonctionne correctement.
 
 PS: une fois le readme consulté , affiche consultation README TERMINÉ

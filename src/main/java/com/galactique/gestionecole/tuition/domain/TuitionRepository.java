@@ -11,6 +11,7 @@ public interface TuitionRepository {
 	TuitionFee saveFee(TuitionFeeDraft draft);
 	List<TuitionFee> findFees(UUID establishmentId, UUID academicYearId);
 	Optional<TuitionFee> findFee(UUID feeId, UUID establishmentId, UUID academicYearId);
+	TuitionFee extendFeeClasses(UUID feeId, UUID establishmentId, UUID academicYearId, List<UUID> schoolClassIds);
 	boolean existsCharge(UUID feeId, UUID studentId);
 	StudentFeeCharge saveCharge(TuitionFee fee, Student student);
 	List<StudentFeeCharge> findChargesForStudent(UUID establishmentId, UUID studentId);

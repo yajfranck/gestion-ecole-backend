@@ -27,9 +27,9 @@ class ProductionFlywayTests {
 	private org.flywaydb.core.Flyway flyway;
 
 	@Test
-	void usesSingleInitialMigration() {
-		assertEquals(1, flyway.info().applied().length);
-		assertEquals("1", flyway.info().current().getVersion().toString());
+	void appliesAllProductionMigrations() {
+		assertEquals(9, flyway.info().applied().length);
+		assertEquals("10", flyway.info().current().getVersion().toString());
 	}
 
 	@Autowired
@@ -44,9 +44,9 @@ class ProductionFlywayTests {
 	}
 
 	@Test
-	void adminRoleCanOnboardAndReadEstablishmentsOnly() {
+	void adminRoleHasPlatformPermissions() {
 		var adminRole = roleJpaRepository.findByCode("ADMIN").orElseThrow();
-		assertEquals(java.util.Set.of("can_establishment_onboard", "can_establishment_read"),
+		assertEquals(java.util.Set.of("can_establishment_onboard", "can_establishment_read", "can_dashboard_read"),
 			adminRole.getPermissions().stream().map(permission -> permission.getCode())
 				.collect(java.util.stream.Collectors.toSet()));
 	}
@@ -57,7 +57,8 @@ class ProductionFlywayTests {
 		var permissionCodes = role.getPermissions().stream().map(permission -> permission.getCode())
 			.collect(java.util.stream.Collectors.toSet());
 		assertTrue(permissionCodes.containsAll(java.util.Set.of(
-			"can_role_read", "can_role_create", "can_role_update", "can_permission_read")));
+			"can_role_read", "can_role_create", "can_role_update", "can_permission_read", "can_enrollment_update",
+			"can_timetable_read", "can_timetable_create", "can_timetable_update", "can_timetable_delete", "can_timetable_copy", "can_school_year_rollover")));
 	}
 
 	@Test

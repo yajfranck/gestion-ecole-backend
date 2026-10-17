@@ -151,6 +151,7 @@ public class LearningContentApplicationService {
 		if (current.status() != LearningContentStatus.DRAFT) {
 			throw new LearningContentConflictException();
 		}
+		validateSubject(establishmentId, academicYearId, schoolClassId, current.subjectId(), actor);
 		return contentRepository.publish(current, actor.username());
 	}
 
@@ -247,7 +248,7 @@ public class LearningContentApplicationService {
 	private void validateSubject(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
 		UUID subjectId, EmployeeActor actor) {
 		if (subjectId == null) {
-			return;
+			throw new LearningContentValidationException("subjectId is required");
 		}
 		boolean assigned = schoolCatalogApplicationService.findClassSubjects(
 			establishmentId, academicYearId, schoolClassId, actor).stream()

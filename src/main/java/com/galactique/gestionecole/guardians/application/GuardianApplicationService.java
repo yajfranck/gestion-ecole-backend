@@ -66,7 +66,9 @@ public class GuardianApplicationService {
 		String firstName, String lastName, String email, EmployeeActor actor) {
 		requireAccessibleStudent(establishmentId, studentId, actor);
 		String normalizedEmail = email.strip().toLowerCase(Locale.ROOT);
-		Guardian guardian = guardianRepository.findByEmail(normalizedEmail).orElseGet(() -> {
+		var existingAccount = userAccountRepository.findByUsername(normalizedEmail);
+		Guardian guardian = existingAccount.flatMap(account -> guardianRepository.findByUserAccountId(account.id()))
+			.or(() -> guardianRepository.findByEmail(normalizedEmail)).orElseGet(() -> {
 			try {
 				return guardianRepository.save(firstName.strip(), lastName.strip(), normalizedEmail);
 			} catch (DataIntegrityViolationException exception) {
@@ -75,6 +77,10 @@ public class GuardianApplicationService {
 		});
 		if (!guardian.enabled()) {
 			throw new GuardianNotFoundException();
+		}
+		if (guardian.userAccountId() != null && existingAccount.isPresent()
+			&& !guardian.userAccountId().equals(existingAccount.orElseThrow().id())) {
+			throw new GuardianConflictException();
 		}
 		if (guardianRepository.existsLink(guardian.id(), studentId)) {
 			throw new GuardianConflictException();
@@ -87,8 +93,11 @@ public class GuardianApplicationService {
 		if (guardian.userAccountId() != null) {
 			return new GuardianLinkResult(guardian, "ACCESS_ALREADY_ACTIVE");
 		}
-		if (userAccountRepository.findByUsername(normalizedEmail).isPresent()) {
-			throw new GuardianConflictException();
+		if (existingAccount.isPresent()) {
+			UUID accountId = existingAccount.orElseThrow().id();
+			securityAccountProvisioner.addGuardianRole(accountId);
+			Guardian attachedGuardian = guardianRepository.attachUserAccount(guardian.id(), accountId);
+			return new GuardianLinkResult(attachedGuardian, "ACCESS_ALREADY_ACTIVE");
 		}
 
 		String token = generateToken();
@@ -143,7 +152,9 @@ public class GuardianApplicationService {
 
 	@Transactional(readOnly = true)
 	public List<Student> findChildren(String username) {
-		return guardianRepository.findByEmail(username.strip().toLowerCase(Locale.ROOT))
+		return userAccountRepository.findByUsername(username)
+			.filter(account -> account.enabled() && !account.locked())
+			.flatMap(account -> guardianRepository.findByUserAccountId(account.id()))
 			.filter(guardian -> guardian.enabled())
 			.filter(guardian -> guardian.userAccountId() != null)
 			.map(guardian -> guardianRepository.findChildren(guardian.id()).stream()
@@ -155,7 +166,9 @@ public class GuardianApplicationService {
 
 	@Transactional(readOnly = true)
 	public Student findLinkedChild(String username, UUID studentId) {
-		Guardian guardian = guardianRepository.findByEmail(username.strip().toLowerCase(Locale.ROOT))
+		Guardian guardian = userAccountRepository.findByUsername(username)
+			.filter(account -> account.enabled() && !account.locked())
+			.flatMap(account -> guardianRepository.findByUserAccountId(account.id()))
 			.filter(Guardian::enabled)
 			.filter(item -> item.userAccountId() != null)
 			.orElseThrow(GuardianNotFoundException::new);

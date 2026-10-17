@@ -8,6 +8,8 @@ public interface SecurityAccountProvisioner {
 
 	UUID createGuardianAccount(String username, String rawPassword);
 
+	void addGuardianRole(UUID userAccountId);
+
 	UUID createEmployeeAccount(String username, String rawPassword, Set<String> effectiveRoleCodes);
 
 	void updateEmployeeAccount(UUID userAccountId, String username, Set<String> effectiveRoleCodes);

@@ -7,6 +7,7 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface EnrollmentJpaRepository extends JpaRepository<EnrollmentEntity, UUID> {
+	Optional<EnrollmentEntity> findByIdAndEstablishmentIdAndAcademicYearId(UUID id, UUID establishmentId, UUID academicYearId);
 	boolean existsByStudentIdAndAcademicYearId(UUID studentId, UUID academicYearId);
 
 	List<EnrollmentEntity> findAllByEstablishmentIdAndAcademicYearIdOrderByCreatedAtAsc(

@@ -19,6 +19,10 @@ public interface UserAccountJpaRepository extends JpaRepository<UserAccountEntit
 	@Query("select account from UserAccountEntity account where lower(account.username) = lower(:username)")
 	Optional<UserAccountEntity> findByUsernameForUpdate(@Param("username") String username);
 
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	@Query("select account from UserAccountEntity account where account.id = :id")
+	Optional<UserAccountEntity> findByIdForUpdate(@Param("id") UUID id);
+
 	@Override
 	@EntityGraph(attributePaths = {"roles", "roles.permissions"})
 	List<UserAccountEntity> findAll();

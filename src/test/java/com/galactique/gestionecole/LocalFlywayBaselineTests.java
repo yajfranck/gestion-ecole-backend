@@ -17,8 +17,8 @@ class LocalFlywayBaselineTests {
 
     @Test
     void initializesOnlyLocalAdminWithoutBusinessFixtures() {
-        assertEquals(2, flyway.info().applied().length);
-        assertEquals("2", flyway.info().current().getVersion().toString());
+        assertEquals(10, flyway.info().applied().length);
+        assertEquals("10", flyway.info().current().getVersion().toString());
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM security_user_accounts", Integer.class));
         assertEquals("admin-tech", jdbc.queryForObject("SELECT username FROM security_user_accounts", String.class));
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM security_user_roles ur JOIN security_roles r ON r.id = ur.role_id WHERE r.code = 'ADMIN'", Integer.class));

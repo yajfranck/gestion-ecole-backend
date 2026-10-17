@@ -29,6 +29,12 @@ public class JpaGuardianRepositoryAdapter implements GuardianRepository {
 	}
 
 	@Override
+	@Transactional(readOnly = true)
+	public Optional<Guardian> findByUserAccountId(UUID userAccountId) {
+		return guardianJpaRepository.findByUserAccountId(userAccountId).map(GuardianEntity::toDomain);
+	}
+
+	@Override
 	@Transactional
 	public Optional<Guardian> findByIdForUpdate(UUID guardianId) {
 		return guardianJpaRepository.findByIdForUpdate(guardianId).map(guardian -> guardian.toDomain());

@@ -67,6 +67,17 @@ public class JpaSecurityAccountProvisioner implements SecurityAccountProvisioner
 
 	@Override
 	@Transactional
+	public void addGuardianRole(UUID userAccountId) {
+		UserAccountEntity account = userAccountJpaRepository.findByIdForUpdate(userAccountId)
+			.orElseThrow(() -> new IllegalStateException("Guardian security account was not found"));
+		RoleEntity parentRole = roleJpaRepository.findByCode("PARENT")
+			.filter(RoleEntity::isEnabled)
+			.orElseThrow(() -> new IllegalStateException("Required security role is missing: PARENT"));
+		account.addRole(parentRole);
+	}
+
+	@Override
+	@Transactional
 	public UUID createEmployeeAccount(String username, String rawPassword, Set<String> effectiveRoleCodes) {
 		if (userAccountJpaRepository.findByUsernameIgnoreCase(username).isPresent()) {
 			throw new DataIntegrityViolationException("A security account already exists for this username");
@@ -88,7 +99,7 @@ public class JpaSecurityAccountProvisioner implements SecurityAccountProvisioner
 				throw new DataIntegrityViolationException("A security account already exists for this username");
 			}
 		});
-		UserAccountEntity userAccount = userAccountJpaRepository.findByIdWithRoles(userAccountId)
+		UserAccountEntity userAccount = userAccountJpaRepository.findByIdForUpdate(userAccountId)
 			.orElseThrow(() -> new IllegalStateException(EMPLOYEE_SECURITY_ACCOUNT_NOT_FOUND));
 		userAccount.updateEmployeeAccount(normalizedUsername, resolveEmployeeRoles(effectiveRoleCodes));
 	}
@@ -96,7 +107,7 @@ public class JpaSecurityAccountProvisioner implements SecurityAccountProvisioner
 	@Override
 	@Transactional
 	public void updateEmployeeRoles(UUID userAccountId, Set<String> effectiveRoleCodes) {
-		UserAccountEntity userAccount = userAccountJpaRepository.findByIdWithRoles(userAccountId)
+		UserAccountEntity userAccount = userAccountJpaRepository.findByIdForUpdate(userAccountId)
 			.orElseThrow(() -> new IllegalStateException(EMPLOYEE_SECURITY_ACCOUNT_NOT_FOUND));
 		userAccount.updateEmployeeAccount(userAccount.getUsername(), resolveEmployeeRoles(effectiveRoleCodes));
 	}

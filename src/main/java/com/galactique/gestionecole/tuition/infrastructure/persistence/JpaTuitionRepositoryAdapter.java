@@ -67,6 +67,14 @@ public class JpaTuitionRepositoryAdapter implements TuitionRepository {
 
 	@Override
 	@Transactional
+	public TuitionFee extendFeeClasses(UUID feeId, UUID establishmentId, UUID academicYearId, List<UUID> schoolClassIds) {
+		var entity = feeRepository.findByIdAndEstablishmentIdAndAcademicYearId(feeId, establishmentId, academicYearId).orElseThrow();
+		entity.addSchoolClasses(schoolClassIds);
+		return feeRepository.saveAndFlush(entity).toDomain();
+	}
+
+	@Override
+	@Transactional
 	public StudentFeeCharge saveCharge(TuitionFee fee, Student student) {
 		return chargeRepository.saveAndFlush(new StudentFeeChargeEntity(fee, student)).toDomain();
 	}

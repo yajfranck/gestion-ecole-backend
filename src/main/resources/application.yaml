@@ -27,14 +27,18 @@ security:
     refresh-token-ttl: P30D
 
 app:
+  invitations:
+    scheme: ${INVITATION_SCHEME:http}
+    host: ${INVITATION_HOST:localhost}
+    port: ${INVITATION_PORT:4200}
   learning:
     storage-root: ${LEARNING_STORAGE_ROOT:${java.io.tmpdir}/gestion-ecole/learning-private}
     max-file-size-bytes: ${LEARNING_MAX_FILE_SIZE_BYTES:10485760}
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:4200}
   employees:
-    invitation-accept-url: ${EMPLOYEE_INVITATION_ACCEPT_URL:${STAFF_INVITATION_ACCEPT_URL:http://localhost:3000/accept-invitation}}
+    invitation-accept-url: ${EMPLOYEE_INVITATION_ACCEPT_URL:${STAFF_INVITATION_ACCEPT_URL:${app.invitations.scheme}://${app.invitations.host}:${app.invitations.port}/accept-invitation}}
     invitation-from: ${EMPLOYEE_INVITATION_FROM:${STAFF_INVITATION_FROM:${SMTP_USERNAME:franckyaj@yahoo.com}}}
   guardians:
-    invitation-accept-url: ${GUARDIAN_INVITATION_ACCEPT_URL:http://localhost:3000/accept-guardian-invitation}
+    invitation-accept-url: ${GUARDIAN_INVITATION_ACCEPT_URL:${app.invitations.scheme}://${app.invitations.host}:${app.invitations.port}/accept-guardian-invitation}
     invitation-from: ${GUARDIAN_INVITATION_FROM:${SMTP_USERNAME:franckyaj@yahoo.com}}

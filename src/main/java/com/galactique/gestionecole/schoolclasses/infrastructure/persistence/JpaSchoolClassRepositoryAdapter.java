@@ -20,8 +20,9 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 
 	@Override
 	@Transactional
-	public SchoolClass save(UUID establishmentId, UUID academicYearId, String code, String name) {
-		return jpaRepository.save(new SchoolClassEntity(establishmentId, academicYearId, code, name))
+	public SchoolClass save(UUID establishmentId, UUID academicYearId, String code, String name, String series) {
+		return jpaRepository.saveAndFlush(new SchoolClassEntity(establishmentId, academicYearId, code, name,
+			SchoolClass.normalizeSeries(series)))
 			.toDomain();
 	}
 
@@ -69,10 +70,11 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 
 	@Override
 	@Transactional
-	public SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId, String code, String name) {
+	public SchoolClass update(UUID schoolClassId, UUID establishmentId, UUID academicYearId, String code, String name,
+		String series) {
 		SchoolClassEntity entity = jpaRepository.findByIdAndEstablishmentIdAndAcademicYearIdAndEnabledTrue(
 			schoolClassId, establishmentId, academicYearId).orElseThrow();
-		entity.update(code, name);
+		entity.update(code, name, SchoolClass.normalizeSeries(series));
 		return entity.toDomain();
 	}
 
@@ -83,5 +85,11 @@ public class JpaSchoolClassRepositoryAdapter implements SchoolClassRepository {
 			schoolClassId, establishmentId, academicYearId).orElseThrow();
 		entity.archive();
 		return entity.toDomain();
+	}
+
+	@Override
+	@Transactional
+	public Optional<SchoolClass> findForUpdate(UUID schoolClassId, UUID establishmentId, UUID academicYearId) {
+		return jpaRepository.findForUpdate(schoolClassId, establishmentId, academicYearId).map(SchoolClassEntity::toDomain);
 	}
 }

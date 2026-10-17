@@ -12,6 +12,7 @@ import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedExc
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.establishments.domain.Establishment;
+import com.galactique.gestionecole.guardians.application.GuardianApplicationService;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicPeriod;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicPeriodRepository;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
@@ -25,21 +26,31 @@ public class SchoolCalendarApplicationService {
 	private final AcademicPeriodRepository academicPeriodRepository;
 	private final EmployeeApplicationService employeeApplicationService;
 	private final LicenseApplicationService licenseApplicationService;
+	private final GuardianApplicationService guardianApplicationService;
 
 	public SchoolCalendarApplicationService(
 		AcademicYearRepository academicYearRepository,
 		AcademicPeriodRepository academicPeriodRepository,
 		EmployeeApplicationService employeeApplicationService,
-		LicenseApplicationService licenseApplicationService) {
+		LicenseApplicationService licenseApplicationService, GuardianApplicationService guardianApplicationService) {
 		this.academicYearRepository = academicYearRepository;
 		this.academicPeriodRepository = academicPeriodRepository;
 		this.employeeApplicationService = employeeApplicationService;
 		this.licenseApplicationService = licenseApplicationService;
+		this.guardianApplicationService = guardianApplicationService;
 	}
 
 	@Transactional(readOnly = true)
-	public List<AcademicYear> findYears(UUID establishmentId, EmployeeActor actor) {
-		requireAccessibleEstablishment(establishmentId, actor);
+	public List<AcademicYear> findYears(UUID establishmentId, EmployeeActor actor,
+		boolean academicYearAccess, boolean guardianAccess) {
+		boolean linkedGuardian = guardianAccess && guardianApplicationService.findChildren(actor.username()).stream()
+			.anyMatch(student -> establishmentId.equals(student.establishmentId()));
+		if (!linkedGuardian) {
+			if (!academicYearAccess) {
+				throw new AcademicCalendarAccessDeniedException();
+			}
+			requireAccessibleEstablishment(establishmentId, actor);
+		}
 		return academicYearRepository.findAllByEstablishmentId(establishmentId).stream()
 			.filter(AcademicYear::enabled)
 			.toList();
@@ -74,6 +85,14 @@ public class SchoolCalendarApplicationService {
 	@Transactional(readOnly = true)
 	public AcademicYear findYearForGuardian(UUID establishmentId, UUID academicYearId) {
 		return academicYearRepository.findByIdAndEstablishmentId(academicYearId, establishmentId)
+			.orElseThrow(AcademicCalendarNotFoundException::new);
+	}
+
+	/** Serializes fee creation and enrollment settlement for the same academic year. */
+	@Transactional
+	public AcademicYear lockYearForEnrollment(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
+		requireAccessibleEstablishment(establishmentId, actor);
+		return academicYearRepository.findForUpdate(academicYearId, establishmentId)
 			.orElseThrow(AcademicCalendarNotFoundException::new);
 	}
 

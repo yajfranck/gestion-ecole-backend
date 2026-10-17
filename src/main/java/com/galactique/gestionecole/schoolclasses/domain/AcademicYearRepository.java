@@ -16,6 +16,8 @@ public interface AcademicYearRepository {
 
 	Optional<AcademicYear> findByIdAndEstablishmentId(UUID academicYearId, UUID establishmentId);
 
+	Optional<AcademicYear> findForUpdate(UUID academicYearId, UUID establishmentId);
+
 	AcademicYear update(UUID academicYearId, UUID establishmentId, String name, LocalDate startsOn, LocalDate endsOn);
 
 	AcademicYear disable(UUID academicYearId, UUID establishmentId);

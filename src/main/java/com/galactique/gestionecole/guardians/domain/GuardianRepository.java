@@ -8,6 +8,7 @@ import com.galactique.gestionecole.students.domain.Student;
 
 public interface GuardianRepository {
 	Optional<Guardian> findByEmail(String email);
+	Optional<Guardian> findByUserAccountId(UUID userAccountId);
 	Optional<Guardian> findByIdForUpdate(UUID guardianId);
 	Guardian save(String firstName, String lastName, String email);
 	boolean existsLink(UUID guardianId, UUID studentId);

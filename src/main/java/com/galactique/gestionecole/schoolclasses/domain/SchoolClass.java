@@ -5,7 +5,7 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 
-public record SchoolClass(UUID id, UUID establishmentId, UUID academicYearId, String code, String name,
+public record SchoolClass(UUID id, UUID establishmentId, UUID academicYearId, String code, String name, String series,
 	boolean enabled, Instant createdAt, Instant updatedAt) {
 	public SchoolClass {
 		Objects.requireNonNull(id, "id must not be null");
@@ -13,8 +13,20 @@ public record SchoolClass(UUID id, UUID establishmentId, UUID academicYearId, St
 		Objects.requireNonNull(academicYearId, "academicYearId must not be null");
 		code = required(code, "code", 40).toUpperCase(Locale.ROOT);
 		name = required(name, "name", 100);
+		series = normalizeSeries(series);
 		Objects.requireNonNull(createdAt, "createdAt must not be null");
 		Objects.requireNonNull(updatedAt, "updatedAt must not be null");
+	}
+
+	public static String normalizeSeries(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		String normalized = value.strip();
+		if (normalized.length() > 100) {
+			throw new IllegalArgumentException("series must contain at most 100 characters");
+		}
+		return normalized;
 	}
 
 	private static String required(String value, String field, int maxLength) {
