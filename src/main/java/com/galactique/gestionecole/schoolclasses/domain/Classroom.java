@@ -6,7 +6,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 public record Classroom(UUID id, UUID establishmentId, UUID academicYearId, UUID schoolClassId,
-	String code, String name, boolean enabled, Instant createdAt, Instant updatedAt) {
+	String code, String name, int maxStudents, boolean enabled, Instant createdAt, Instant updatedAt) {
 	public Classroom {
 		Objects.requireNonNull(id);
 		Objects.requireNonNull(establishmentId);
@@ -14,6 +14,9 @@ public record Classroom(UUID id, UUID establishmentId, UUID academicYearId, UUID
 		Objects.requireNonNull(schoolClassId);
 		code = required(code, 40).toUpperCase(Locale.ROOT);
 		name = required(name, 100);
+		if (maxStudents < 1) {
+			throw new IllegalArgumentException("Maximum students must be positive");
+		}
 		Objects.requireNonNull(createdAt);
 		Objects.requireNonNull(updatedAt);
 	}

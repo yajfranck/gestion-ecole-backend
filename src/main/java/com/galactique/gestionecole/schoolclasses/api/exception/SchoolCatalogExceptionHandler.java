@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogAccessDeniedException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogConflictException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolClassBulkValidationException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolClassBulkConflictException;
 
 @RestControllerAdvice(basePackages = "com.galactique.gestionecole.schoolclasses.api")
 public class SchoolCatalogExceptionHandler {
@@ -31,6 +33,16 @@ public class SchoolCatalogExceptionHandler {
 	@ExceptionHandler(IllegalArgumentException.class)
 	ResponseEntity<ProblemDetail> handleInvalidRequest() {
 		return problem(HttpStatus.BAD_REQUEST, "School catalog data is invalid");
+	}
+
+	@ExceptionHandler(SchoolClassBulkValidationException.class)
+	ResponseEntity<ProblemDetail> handleInvalidBulkClass(SchoolClassBulkValidationException exception) {
+		return problem(HttpStatus.BAD_REQUEST, exception.getMessage());
+	}
+
+	@ExceptionHandler(SchoolClassBulkConflictException.class)
+	ResponseEntity<ProblemDetail> handleBulkConflict(SchoolClassBulkConflictException exception) {
+		return problem(HttpStatus.CONFLICT, exception.getMessage());
 	}
 
 	private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {

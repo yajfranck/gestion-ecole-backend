@@ -59,6 +59,26 @@ class EstablishmentOnboardingControllerTests {
 	}
 
 	@Test
+	void defaultAdminAccountCanOnboardAnEstablishmentWithItsActualPermissions() throws Exception {
+		var login = mockMvc.perform(post("/api/v1/login")
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"login\":\"admin-tech\",\"password\":\"admin\"}"))
+			.andExpect(status().isOk()).andReturn();
+		String accessToken = com.jayway.jsonpath.JsonPath.read(
+			login.getResponse().getContentAsString(), "$.accessToken");
+		String suffix = UUID.randomUUID().toString().substring(0, 8);
+		mockMvc.perform(post("/api/v1/establishments")
+			.header("Authorization", "Bearer " + accessToken)
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"DEF-" + suffix + "\",\"name\":\"Default Admin School\","
+				+ "\"administrator\":{\"employeeNumber\":\"DEF-ADM-" + suffix
+				+ "\",\"firstName\":\"Default\",\"lastName\":\"Admin\","
+				+ "\"email\":\"default-admin-" + suffix + "@example.org\"}}"))
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.establishment.code").value(("DEF-" + suffix).toUpperCase(java.util.Locale.ROOT)));
+	}
+
+	@Test
 	void nonPlatformAdminCannotOnboardAnEstablishment() throws Exception {
 		mockMvc.perform(post("/api/v1/establishments")
 			.with(user("staff@example.org").authorities(new SimpleGrantedAuthority("STAFF_ACCESS")))

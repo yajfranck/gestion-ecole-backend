@@ -4,9 +4,19 @@ Le contrat OpenAPI/Swagger maintenu pour cette API se trouve dans [`swagger.yaml
 
 Base URL locale : `http://localhost:8080/api/v1`
 
-Les endpoints de l’API applicative sont versionnés dans l’URI (`/api/v1`). Les changements incompatibles de contrat devront introduire une nouvelle version, par exemple `/api/v2`.
+Les endpoints de l’API applicative sont versionnés dans l’URI (`/api/v1`). Cette refactorisation du backend en cours de développement ajuste le contrat `/api/v1` ; les clients doivent migrer les routes signalées ci-dessous.
 
 Les réponses sont au format JSON, sauf indication contraire. Flyway crée le schéma et les rôles; le compte local est seedé uniquement avec le profil `local`. En production, `admin-tech` est provisionné séparément par `scripts/provision-admin-tech.sql` après l’application des migrations.
+
+## Règles communes d’autorisation et de périmètre
+
+Chaque méthode REST sensible déclare sa permission `can_*` avec `@PreAuthorize`. Aucun rôle administrateur ne remplace une permission et aucun administrateur n’est exempté des licences. Les autorités effectives sont relues en base à chaque appel JWT et limitées aux rôles du rattachement demandé ; une révocation reste effective avec un JWT déjà émis.
+
+Le périmètre plateforme est attribué explicitement dans `security_role_scopes` (`scope_code = PLATFORM`), indépendamment des permissions. Une permission ne donne pas accès à un autre établissement. Une habilitation plateforme ne donne pas de permission fonctionnelle. Les comptes doivent être actifs et non verrouillés ; les années et ressources doivent appartenir au contexte demandé. Les liens parent/enfant et les licences sont toujours contrôlés.
+
+Les identifiants de chemin sont des UUID, sauf `licenseId` (entier). `academicYearId` représente l’année scolaire. Lorsqu’une ressource est annuelle, l’établissement et l’année sont obligatoires ; aucune année par défaut n’est choisie. Les dossiers élèves et les paramètres communs à l’école restent indépendants de l’année. JWT absent/invalide ou compte désactivé/verrouillé : `401` ; permission, licence ou habilitation manquante : `403` ; ressource ou année absente, inactive ou étrangère au contexte : `404` (un refus de périmètre peut être rendu `403`). Entrée invalide : `400` ; conflit métier : `409`.
+
+La correspondance complète des routes, des anciennes autorisations et des permissions actuelles figure dans [authorization-migration.md](authorization-migration.md). Appliquer Flyway V18 avant ce backend. Les anciennes routes du personnel et les routes annuelles sans contexte sont retirées ; les clients doivent utiliser les chemins ci-dessous. Connexion, renouvellement et acceptation d’invitation restent publics et valident leurs secrets propres.
 
 ## Authentification
 
@@ -77,7 +87,7 @@ Renouvelle le JWT d’accès à partir d’un refresh token. Cette route n’exi
 
 ### `PUT /api/v1/user/me/password`
 
-Change le mot de passe du compte authentifié. Le mot de passe actuel doit être fourni et vérifié; le nouveau doit contenir au moins 12 caractères et ne pas dépasser 72 octets UTF-8. La réponse ne révèle pas si le compte existe lorsque le mot de passe actuel est erroné.
+Requiert `can_user_change_password`. Change le mot de passe du compte authentifié. Le mot de passe actuel doit être fourni et vérifié; le nouveau doit contenir au moins 12 caractères et ne pas dépasser 72 octets UTF-8. La réponse ne révèle pas si le compte existe lorsque le mot de passe actuel est erroné.
 
 ```json
 {
@@ -90,7 +100,7 @@ Réponse `204 No Content`. Un mot de passe actuel incorrect renvoie `403 Forbidd
 
 ## Administration de la sécurité
 
-Les routes `/api/v1/user`, `/api/v1/role` et `/api/v1/permission` restent globales et requièrent `ADMIN_ACCESS`. L’administrateur d’école gère les rôles de son établissement via `/api/v1/establishments/{establishmentId}/roles` et consulte les permissions assignables via `/permissions`. Les rôles système sont visibles mais non modifiables; les rôles personnalisés ne sont accessibles que dans leur établissement. Les permissions plateforme (`ADMIN_ACCESS`, `can_establishment_onboard`, `can_establishment_read`) ne sont pas assignables aux rôles locaux. Un utilisateur non authentifié reçoit `401 Unauthorized`; un utilisateur hors périmètre reçoit `403 Forbidden`.
+Les routes globales de comptes et rôles exigent respectivement `can_user_read` et `can_platform_role_read/create/update`, ainsi que le périmètre PLATFORM. `GET /api/v1/permission` exige `can_permission_read` et retourne le catalogue complet, même si le lecteur ne possède qu’une permission. Les rôles locaux se gèrent sous `/api/v1/establishments/{establishmentId}/roles` avec `can_role_*` et un rattachement au contexte ou une habilitation PLATFORM. Le catalogue local `/permissions` retourne également toutes les permissions ; la création ou modification d’un rôle local rejette les permissions plateforme (opérations sur les comptes globaux, rôles globaux, offres et gestion des licences, création/désactivation d’école et promotion d’administrateur). Les rôles système restent non modifiables par la route locale.
 
 ### `GET /api/v1/user`
 
@@ -138,7 +148,7 @@ Retourne les rôles avec leurs permissions associées.
 
 ### `POST /api/v1/role`
 
-Crée un rôle avec un code unique, un nom, une description facultative et une ou plusieurs permissions déjà présentes dans le catalogue. Requiert `ADMIN_ACCESS`.
+Crée un rôle avec un code unique, un nom, une description facultative et une liste de permissions déjà présentes dans le catalogue. Requiert `can_platform_role_create` et le périmètre PLATFORM.
 
 ```json
 {
@@ -153,7 +163,7 @@ Réponse `201 Created` avec le rôle et ses permissions. Code déjà utilisé : 
 
 ### `PUT /api/v1/role/{code}`
 
-Remplace le nom, la description et la liste complète des permissions du rôle. Le code du rôle et son état actif ne sont pas modifiables par cette route. Requiert `ADMIN_ACCESS`.
+Remplace le nom, la description et la liste complète des permissions du rôle. Le code du rôle et son état actif ne sont pas modifiables par cette route. Requiert `can_platform_role_update` et le périmètre PLATFORM.
 
 ```json
 {
@@ -163,9 +173,9 @@ Remplace le nom, la description et la liste complète des permissions du rôle. 
 }
 ```
 
-Réponse `200 OK` avec le rôle mis à jour. Code inexistant : `404 Not Found`; permissions inconnues ou liste vide : `400 Bad Request`. Le rôle `ADMIN` ne peut pas recevoir `ADMIN_ACCESS` et reste limité à l’onboarding d’établissement.
+Réponse `200 OK` avec le rôle mis à jour. Code inexistant : `404 Not Found`; permissions inconnues : `400 Bad Request`. Une liste vide est acceptée pour révoquer tous les droits d’un rôle, y compris un administrateur. Aucun droit n’est rétabli automatiquement.
 
-Les JWT d’accès déjà émis restent valides jusqu’à leur expiration (15 minutes par défaut); les changements de permissions s’appliquent aux jetons émis ensuite.
+Les JWT déjà émis restent cryptographiquement valides jusqu’à leur expiration ; leurs permissions effectives sont relues en base à chaque requête, donc toute révocation est immédiatement appliquée.
 
 ### `GET /api/v1/establishments/{establishmentId}/roles`
 
@@ -202,7 +212,7 @@ Réponse `200 OK`; rôle absent ou non local à l’établissement : `404 Not Fo
 
 ### `GET /api/v1/establishments/{establishmentId}/permissions`
 
-Requiert `can_permission_read` et l’appartenance du demandeur à l’établissement. Retourne le catalogue des permissions assignables. Les permissions `ADMIN_ACCESS`, `can_establishment_onboard` et `can_establishment_read` sont exclues. Le catalogue est en lecture seule pour les établissements.
+Requiert `can_permission_read` et le périmètre de l’établissement. Retourne le catalogue complet, sans filtrage selon les droits du lecteur. La validation des permissions délégables est effectuée lors de la création ou modification du rôle local.
 
 ### `GET /api/v1/permission`
 
@@ -213,8 +223,8 @@ Retourne le catalogue des permissions.
 ```json
 [
 	{
-		"code": "ADMIN_ACCESS",
-		"description": "Administrative access"
+		"code": "can_user_read",
+		"description": "Read platform users"
 	}
 ]
 ```
@@ -223,11 +233,13 @@ Retourne le catalogue des permissions.
 
 ### `GET /api/v1/establishments`
 
-Nécessite `ADMIN_ACCESS`, `can_establishment_read` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. `ADMIN` possède `can_establishment_read` et voit tous les établissements; le responsable d’établissement ne voit que le sien. Cette lecture n’accorde ni la désactivation d’un établissement ni l’accès à l’administration de sécurité.
+Requiert `can_establishment_read`. Retourne les établissements des rattachements actifs et des enfants liés du compte ; une habilitation PLATFORM explicite permet leur consultation globale. Cette permission ne modifie pas le périmètre de données.
 
 ### `POST /api/v1/establishments`
 
-Crée un établissement et invite son premier administrateur d’école dans une même transaction. Réservé au rôle `ADMIN` et à `can_establishment_onboard`.
+Crée un établissement et invite son premier administrateur d’école dans une même transaction. Requiert `can_establishment_onboard` et le périmètre PLATFORM. Le nom du rôle est sans effet.
+
+Le rôle global `ADMIN` par défaut reçoit `can_establishment_onboard` et le scope PLATFORM par la migration V19. La permission reste vérifiée par `@PreAuthorize` : un compte portant seulement `ROLE_ADMIN`, sans autorité fonctionnelle active, est refusé.
 
 ```json
 {
@@ -242,11 +254,11 @@ Crée un établissement et invite son premier administrateur d’école dans une
 }
 ```
 
-Réponse `201 Created` avec l’établissement et `administratorInvitation` (`employeeId`, `status: "INVITATION_SENT"`). Le premier administrateur reçoit une invitation pour définir son mot de passe. Un code d’établissement, matricule ou email déjà utilisé renvoie `409 Conflict`; un échec SMTP renvoie `503 Service Unavailable`.
+Réponse `201 Created` avec l’établissement et `administratorInvitation` (`employeeId`, `status: "INVITATION_SENT"`). Le premier administrateur reçoit une invitation pour définir son mot de passe. Le matricule et l’email sont uniques dans l’établissement. Un compte existant actif peut recevoir un second rattachement (`status: ACCOUNT_LINKED`) sans modifier son mot de passe ; une invitation non acceptée avec le même email ou un code d’école déjà utilisé renvoie `409 Conflict`; un échec SMTP renvoie `503 Service Unavailable`.
 
 ### `PATCH /api/v1/establishments/{establishmentId}`
 
-Autorisé au rôle global `ADMIN` ou avec `can_establishment_update`. Pour un administrateur local, le service vérifie aussi que le compte employé est actif, que son rôle effectif `ESTABLISHMENT_ADMIN` est présent (directement ou hérité du poste) et qu’il appartient à l’établissement visé. `can_establishment_read` n’accorde pas cette modification.
+Requiert `can_establishment_update` et un rattachement actif au même établissement ou une habilitation PLATFORM. Aucun rôle administrateur n’est exigé ni suffisant.
 
 ```json
 {"name":"École Exemple"}
@@ -256,7 +268,7 @@ Autorisé au rôle global `ADMIN` ou avec `can_establishment_update`. Pour un ad
 
 ### `DELETE /api/v1/establishments/{establishmentId}`
 
-Désactive logiquement un établissement. Toutes ses fiches de personnel et leurs comptes sont également désactivés, et leurs refresh tokens sont révoqués. Cette opération exige `ADMIN_ACCESS`; le rôle `ADMIN` d’onboarding ne la possède pas.
+Désactive logiquement un établissement. Toutes ses fiches de personnel et leurs comptes sont également désactivés, et leurs refresh tokens sont révoqués. Cette opération exige `can_establishment_delete` et le périmètre de l’établissement. Les comptes qui possèdent un autre rattachement actif sont conservés ; les autres comptes et leurs refresh tokens sont désactivés/révoqués.
 
 Réponse `204 No Content`; un établissement absent renvoie `404 Not Found`.
 
@@ -264,21 +276,21 @@ Réponse `204 No Content`; un établissement absent renvoie `404 Not Found`.
 
 ### `GET /api/v1/dashboard`
 
-Retourne en un appel les agrégats du dashboard. Aucun corps de requête. JWT Bearer et permission `can_dashboard_read` requis ; la migration V5 attribue cette permission aux rôles `ADMIN` et `ESTABLISHMENT_ADMIN`. Les jetons déjà émis doivent être renouvelés ou le compte reconnecté pour intégrer cette permission.
+Retourne les agrégats plateforme avec `can_dashboard_read` et le périmètre PLATFORM. Aucun corps. La vue établissement utilise exclusivement `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/dashboard`, avec `can_dashboard_read`, un rattachement actif ou le périmètre PLATFORM, et l’année active de cet établissement. Aucun rôle administrateur n’est exigé. Les réponses JSON décrites ci-dessous restent applicables.
 
-Le serveur recharge le compte, ses rôles actifs et sa permission à chaque appel. Un compte désactivé/verrouillé, une permission retirée ou un rôle administrateur révoqué bloque aussi un JWT encore valide. La permission seule ne suffit pas pour un rôle autre que les deux rôles administrateurs. Un administrateur local doit avoir une fiche de personnel active, liée à ce même compte, avec `ESTABLISHMENT_ADMIN` dans ses rôles effectifs directs ou hérités du poste, et un établissement actif.
+Le serveur recharge le compte et ses autorités actuelles à chaque appel. Le périmètre de la route détermine la vue : PLATFORM pour la route globale, rattachement actif ou habilitation PLATFORM pour la route annuelle. Aucun nom de rôle n’accorde de droit ni de priorité de vue.
 
 Le périmètre vient exclusivement de cette identité :
 
-- `ADMIN` reçoit `scope: "PLATFORM"`, `platform` renseigné et `establishment: null`. Il ne reçoit pas les effectifs, présences, finances ou contenus détaillés des écoles. Si le compte cumule les deux rôles, la vue plateforme prime.
-- `ESTABLISHMENT_ADMIN` reçoit `scope: "ESTABLISHMENT"`, `platform: null` et `establishment` renseigné pour son établissement uniquement. Aucun paramètre `establishmentId` n’est pris en charge ; en transmettre un ne permet pas de changer le périmètre.
+- La route globale retourne `scope: "PLATFORM"`, `platform` renseigné et `establishment: null`. Elle ne retourne pas les données métier détaillées des écoles.
+- La route annuelle autorisée retourne `scope: "ESTABLISHMENT"`, `platform: null` et `establishment` renseigné pour son établissement uniquement. Aucun paramètre `establishmentId` n’est pris en charge ; en transmettre un ne permet pas de changer le périmètre.
 
 Paramètres de requête facultatifs pour la vue établissement :
 
 | Paramètre | Format | Règle |
 |---|---|---|
-| `academicYearId` | UUID | Année active de l’établissement authentifié. À défaut, l’année contenant la date UTC courante est choisie ; s’il n’y en a pas, l’année active ayant la date de début la plus récente est utilisée. En cas d’égalité, tri par UUID. |
-| `date` | `YYYY-MM-DD` | Journée des présences et référence des échéances impayées ; doit être comprise dans l’année sélectionnée. À défaut, date UTC courante ramenée au début ou à la fin de cette année si nécessaire. Sans année, la date UTC courante est affichée et les agrégats annuels restent vides. |
+| `academicYearId` | UUID | Obligatoire dans le chemin de la vue établissement, appartient à son établissement. Interdit sur la vue plateforme. |
+| `date` | `YYYY-MM-DD` | Journée des présences et référence des échéances impayées ; doit être comprise dans l’année sélectionnée. À défaut, date UTC courante ramenée au début ou à la fin de cette année si nécessaire. L’année est obligatoire dans le chemin de la vue établissement. |
 
 Ces filtres sont refusés pour la vue plateforme. Fournir `date` explicitement sans année disponible est également refusé. Les données sont lues dans une transaction de consultation avec une isolation `REPEATABLE_READ` ; `generatedAt` est l’instant UTC du calcul. La date ne transforme pas la réponse en historique des encaissements : les totaux financiers incluent tous les paiements enregistrés pour les créances de l’année sélectionnée.
 
@@ -319,11 +331,11 @@ Exemple plateforme (`200 OK`) :
 Exemple d’appel établissement :
 
 ```http
-GET /api/v1/dashboard?academicYearId=22222222-2222-4222-8222-222222222222&date=2026-10-17
+GET /api/v1/establishments/33333333-3333-4333-8333-333333333333/school-years/22222222-2222-4222-8222-222222222222/dashboard?date=2026-10-17
 Authorization: Bearer <accessToken>
 ```
 
-La réponse `200 OK` utilise le même objet racine avec `scope: "ESTABLISHMENT"` et les champs décrits ci-dessus. Formats UUID/date invalides, date hors année ou filtres envoyés par `ADMIN` : `400 Bad Request` ; JWT absent, invalide ou expiré : `401 Unauthorized` ; compte, rôle, permission ou rattachement personnel refusé : `403 Forbidden` ; établissement désactivé ou année absente, archivée ou d’un autre établissement : `404 Not Found`. Les erreurs métier sont des `ProblemDetail` sans détails SQL.
+La réponse `200 OK` utilise le même objet racine avec `scope: "ESTABLISHMENT"` et les champs décrits ci-dessus. Formats UUID/date invalides, date hors année ou filtres annuels envoyés à la route plateforme : `400 Bad Request` ; JWT absent, invalide ou expiré : `401 Unauthorized` ; compte, rôle, permission ou rattachement personnel refusé : `403 Forbidden` ; établissement désactivé ou année absente, archivée ou d’un autre établissement : `404 Not Found`. Les erreurs métier sont des `ProblemDetail` sans détails SQL.
 
 ### Années scolaires et périodes
 
@@ -331,7 +343,7 @@ Les années et périodes sont configurées par établissement. Les périodes ont
 
 #### `GET /api/v1/establishments/{establishmentId}/school-years`
 
-Accessible avec un JWT Bearer et `can_academic_year_read` dans le périmètre de gestion existant, ou avec `can_guardian_read_children` pour un parent/tuteur ayant au moins un enfant actif lié dans cet établissement. Pour cet accès parent, le compte doit être actif et non verrouillé, le tuteur et l’établissement actifs, et une licence active doit inclure `PARENT_PORTAL`. Ces contrôles sont réévalués à chaque requête. Un parent également administrateur conserve son périmètre de gestion avec `can_academic_year_read`.
+Requiert `can_academic_year_read` et un périmètre de gestion de cet établissement avec `SCHOOL_MANAGEMENT`, ou le lien actif parent/enfant dans cet établissement avec `PARENT_PORTAL`. Le parent reçoit explicitement cette permission par V18 ; le rôle seul ne suffit pas.
 
 Paramètre de chemin : `establishmentId`, UUID obligatoire. Aucun corps ni paramètre de requête. Retourne toutes les années actives de cet établissement, triées par date de début décroissante, y compris les années où les enfants du parent ne sont pas inscrits. Les années archivées sont exclues. Cet accès concerne uniquement la liste ; il n’ajoute aucun droit de consultation du détail ou des périodes, de création, de modification ou d’archivage.
 
@@ -419,23 +431,59 @@ Les matières sont propres à un établissement et leur code est unique dans cet
 
 - `GET /api/v1/establishments/{establishmentId}/subjects` — permission `can_subject_read`; liste triée par nom.
 - `GET /api/v1/establishments/{establishmentId}/subjects/{subjectId}` — `can_subject_read`; fiche de la matière.
-- `POST /api/v1/establishments/{establishmentId}/subjects` — `can_subject_create`; crée avec `code` et `name`.
+- `POST /api/v1/establishments/{establishmentId}/subjects` — `can_subject_create`; crée de 1 à 100 matières dans une seule transaction.
+- `POST /api/v1/establishments/{establishmentId}/subjects/batch` — alias conservé, avec le même contrat et la même permission.
 - `PATCH /api/v1/establishments/{establishmentId}/subjects/{subjectId}` — `can_subject_update`; modifie code ou nom.
 - `DELETE /api/v1/establishments/{establishmentId}/subjects/{subjectId}` — `can_subject_delete`; archive, refus `409` si une classe active utilise la matière.
 
-Exemple : `{"code":"MATH","name":"Mathematics"}`. Code déjà utilisé dans l’établissement : `409`.
+Pour la création, `establishmentId` est l’UUID de l’établissement dans le chemin ; aucun paramètre de requête n’est attendu. Le corps JSON contient obligatoirement `subjects`, une liste non nulle de 1 à 100 objets non nuls. Chaque objet contient `name` (obligatoire, non blanc, 100 caractères maximum) et éventuellement `code` (non blanc si fourni, 40 caractères maximum). Les espaces en début et fin sont retirés ; les codes sont normalisés en majuscules et doivent être uniques dans l’établissement et dans le lot. Plusieurs matières sans code sont autorisées.
+
+```http
+POST /api/v1/establishments/11111111-1111-1111-1111-111111111111/subjects
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "subjects": [
+    {"code": "MATH", "name": "Mathématiques"},
+    {"name": "Français"}
+  ]
+}
+```
+
+Réponse `201 Created` : un tableau de matières dans l’ordre de la requête, chaque objet contenant `id`, `establishmentId`, `code` (nullable), `name`, `enabled`, `createdAt` et `updatedAt`. Exemple abrégé :
+
+```json
+[
+  {"id": "22222222-2222-2222-2222-222222222222", "establishmentId": "11111111-1111-1111-1111-111111111111", "code": "MATH", "name": "Mathématiques", "enabled": true, "createdAt": "2026-10-21T10:00:00Z", "updatedAt": "2026-10-21T10:00:00Z"},
+  {"id": "33333333-3333-3333-3333-333333333333", "establishmentId": "11111111-1111-1111-1111-111111111111", "code": null, "name": "Français", "enabled": true, "createdAt": "2026-10-21T10:00:00Z", "updatedAt": "2026-10-21T10:00:00Z"}
+]
+```
+
+La création exige un JWT valide, `hasAuthority('can_subject_create')`, l’accès à l’établissement actif et la fonctionnalité `SCHOOL_MANAGEMENT` de sa licence. Les erreurs sont : `400 Bad Request` pour un UUID mal formé, un corps invalide, une liste absente/vide/trop longue ou une matière invalide ; `401 Unauthorized` pour une authentification absente ou invalide ; `403 Forbidden` pour une permission, un périmètre ou une fonctionnalité de licence refusés ; `404 Not Found` pour un établissement introuvable ou hors périmètre après les contrôles d’accès ; `409 Conflict` pour un code déjà utilisé, y compris dans le lot après normalisation. Toute erreur annule l’ensemble du lot, sans création partielle.
+
+**Changement de contrat de `POST .../subjects`** : l’ancien corps unitaire `{"code":"MATH","name":"Mathématiques"}` doit être enveloppé dans `{"subjects":[...]}`, même pour une seule matière. La réponse est désormais toujours un tableau. Les routes de lecture, modification et archivage restent inchangées.
 
 ### Classes
 
 - `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — permission `can_school_class_read`; liste les classes actives de l’année.
 - `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_read`; fiche de classe.
-- `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — `can_school_class_create`; crée avec `code`, `name` et éventuellement `series`. Réponse `201 Created` avec la classe.
+- `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — `can_school_class_create`; crée une classe sans salle. Réponse `201 Created` avec la classe.
+- `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/bulk` — `can_school_class_create`; crée atomiquement 1 à 100 classes sans salle. Réponse `201 Created` avec le tableau des classes créées.
 - `PATCH /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_update`; modifie le code, le nom ou la série, indépendamment. Réponse `200 OK` avec la classe mise à jour.
 - `DELETE /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_delete`; archive la classe.
 
 Les paramètres de chemin `establishmentId`, `academicYearId` et, pour une fiche, `schoolClassId` sont des UUID. L’année doit être active et appartenir au même établissement que la classe. Ces routes requièrent un JWT valide, la permission indiquée, l’accès à cet établissement et la fonctionnalité `SCHOOL_MANAGEMENT` active dans sa licence. L’administrateur d’établissement reste limité à son école.
 
-À la création, `code` (1 à 40 caractères) et `name` (1 à 100 caractères) sont obligatoires et ne peuvent pas être blancs. Le code est normalisé en majuscules. `series` est un libellé libre facultatif de 100 caractères maximum, par exemple `Scientifique` ou `Littéraire` : aucune liste de séries n’est imposée. Plusieurs classes peuvent partager la même série ; elle ne change pas l’unicité du code dans l’année. Les espaces de début et de fin sont retirés ; une valeur omise, `null`, vide ou blanche crée une classe sans série.
+À la création unitaire, `code` (1 à 40 caractères) et `name` (1 à 100 caractères) sont obligatoires et ne peuvent pas être blancs. Le code est normalisé en majuscules. `series` est un libellé libre facultatif de 100 caractères maximum, par exemple `Scientifique` ou `Littéraire` : aucune liste de séries n’est imposée. Plusieurs classes peuvent partager la même série ; elle ne change pas l’unicité du code dans l’année. Les espaces de début et de fin sont retirés ; une valeur omise, `null`, vide ou blanche crée une classe sans série. Aucun champ `classroom` ou `classrooms` ne fait partie du DTO de création de classe et aucune salle n’est créée automatiquement.
+
+La création multiple utilise le même DTO et les mêmes validations pour chaque élément :
+
+```json
+{"classes":[{"code":"6A","name":"Sixième A","series":"Générale"},{"code":"6B","name":"Sixième B","series":"Générale"}]}
+```
+
+`classes` doit contenir de 1 à 100 objets valides. Les codes doivent être uniques dans la requête et dans l’année. Le traitement est atomique : si un élément échoue, aucune classe de la requête n’est conservée. Une erreur de validation identifie l’élément, par exemple `classes[1]: class code is duplicated in this request` (`400 Bad Request`) ; un code déjà présent en base ou une collision concurrente renvoie `409 Conflict` avec `classes[index]`. Aucun endpoint bulk ne crée de salle.
 
 ```json
 {"code":"T-S-A","name":"Terminale A","series":"Scientifique"}
@@ -451,13 +499,13 @@ Pour retirer la série, envoyer `{"series":""}` (une chaîne blanche a le même 
 
 La création, la modification et la consultation d’une fiche renvoient `id`, `establishmentId`, `academicYearId`, `code`, `name`, `series`, `enabled`, `createdAt` et `updatedAt`. `series` vaut `null` si aucune série n’est définie, y compris pour les classes créées avant la migration V6. La liste renvoie un tableau de ces mêmes objets actifs, triés par nom ; la série figure également dans chaque entrée `establishment.classes` du dashboard.
 
-Erreurs des routes de création/modification : corps, UUID ou valeur invalide (dont série dépassant 100 caractères) : `400 Bad Request` ; JWT absent, invalide ou expiré : `401 Unauthorized` ; permission ou licence insuffisante : `403 Forbidden` ; année, classe ou établissement absent, archivé ou hors périmètre : `404 Not Found` ; code déjà utilisé dans l’année, quelle que soit la série : `409 Conflict`. Les routes de consultation renvoient `200 OK`, ou `400`/`401`/`403`/`404` selon les mêmes règles de paramètres et d’accès.
+Les deux créations et la salle sont des opérations indépendantes. Pour créer une salle, utiliser `POST .../classes/{schoolClassId}/classrooms`. Toutes les routes de création requièrent le JWT, `can_school_class_create` et le périmètre d’établissement actif vérifié par `@PreAuthorize`, sans exception de rôle administrateur. Erreurs de création/modification : corps, UUID ou valeur invalide (dont série dépassant 100 caractères) : `400 Bad Request` ; JWT absent, invalide ou expiré : `401 Unauthorized` ; permission ou périmètre insuffisant : `403 Forbidden` ; année, classe ou établissement absent, archivé ou hors périmètre : `404 Not Found` ; code déjà utilisé en création unitaire : `409 Conflict`. Les routes de consultation renvoient `200 OK`, ou `400`/`401`/`403`/`404` selon les mêmes règles de paramètres et d’accès.
 
 ### Salles ou groupes d’une classe
 
 Une classe représente le niveau/groupe pédagogique parent (exemple : « Sixième », avec sa série éventuelle). Elle peut contenir plusieurs salles/groupes d’élèves (« Sixième A », « Sixième B »). Une salle appartient à une seule classe, une seule année et un seul établissement. La série et les matières restent définies sur la classe ; les frais et contenus ciblant cette classe concernent ses salles. Il ne s’agit pas d’une réservation de locaux physiques.
 
-À la création d’une classe, une salle `DEFAULT` / `Salle principale` est créée automatiquement. Elle peut être renommée « Sixième A », puis complétée par une salle « Sixième B ». La migration V7 crée également une salle principale pour les classes existantes et y rattache les inscriptions, y compris historiques. Les identifiants d’inscription, présences, créances et paiements sont conservés.
+Une classe peut exister sans salle ; aucune salle `DEFAULT` ou salle principale n’est créée automatiquement. Les salles sont créées ou archivées indépendamment via les routes ci-dessous. Les opérations nécessitant une classe opérationnelle refusent une classe sans salle active avec `400 Bad Request` et le détail : « Cette opération est impossible : aucune salle de classe n'est associée à cette classe. Veuillez d'abord lui affecter au moins une salle. » Cela s’applique à la création ou au changement d’une inscription, à la consultation/enregistrement des présences de la classe, aux emplois du temps et à l’affectation d’enseignants à des salles. Le contenu pédagogique en ligne reste au niveau classe/matière et ne nécessite pas de salle. La simple création ou lecture d’une classe, l’affectation d’une matière sans enseignant, et les consultations guardian déjà autorisées ne nécessitent pas de salle.
 
 Base des routes : `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms`. Tous les paramètres de chemin sont des UUID ; la classe et l’année doivent être actives et appartenir à l’établissement accessible au compte. JWT valide et fonctionnalité `SCHOOL_MANAGEMENT` active requis. L’administrateur d’établissement reste limité à son école. Les salles réutilisent les permissions des classes :
 
@@ -465,21 +513,21 @@ Base des routes : `/api/v1/establishments/{establishmentId}/school-years/{academ
 |---|---|---|
 | `GET /classrooms` | `can_school_class_read` | `200` : tableau des salles actives, trié par nom puis identifiant. |
 | `GET /classrooms/{classroomId}` | `can_school_class_read` | `200` : fiche de la salle active. |
-| `POST /classrooms` | `can_school_class_create` | `201` : création avec `code` et `name` obligatoires. |
-| `PATCH /classrooms/{classroomId}` | `can_school_class_update` | `200` : modification de `code` et/ou `name`. Champs omis ou `null` conservés. |
+| `POST /classrooms` | `can_school_class_create` | `201` : création avec `code`, `name` et `maxStudents` obligatoires. |
+| `PATCH /classrooms/{classroomId}` | `can_school_class_update` | `200` : modification de `code`, `name` et/ou `maxStudents`. Champs omis ou `null` conservés. |
 | `DELETE /classrooms/{classroomId}` | `can_school_class_delete` | `204` : archivage logique si aucune inscription ne référence la salle. |
 
 Pour les URL relatives du tableau, le préfixe est celui de la classe (`.../classes/{schoolClassId}`). Le corps de création est par exemple :
 
 ```json
-{"code":"B","name":"Sixième B"}
+{"code":"B","name":"Sixième B","maxStudents":40}
 ```
 
-`code` est non blanc, limité à 40 caractères, nettoyé et mis en majuscules ; il est unique dans la classe, y compris parmi les salles archivées. Le même code `A` est permis dans plusieurs classes distinctes. `name` est non blanc, limité à 100 caractères et nettoyé. Un `PATCH` peut contenir uniquement `{"name":"Sixième B — groupe 2"}`. Le parent de la salle n’est pas modifiable.
+`code` est non blanc, limité à 40 caractères, nettoyé et mis en majuscules ; il est unique dans la classe, y compris parmi les salles archivées. Le même code `A` est permis dans plusieurs classes distinctes. `name` est non blanc, limité à 100 caractères et nettoyé. `maxStudents` est un entier supérieur ou égal à 1. Un `PATCH` peut ne modifier que la capacité, par exemple `{"maxStudents":32}` ; elle ne peut pas être abaissée sous le nombre d’inscriptions déjà rattachées à la salle (`409`). Le parent de la salle n’est pas modifiable.
 
-Les réponses de création, modification et consultation contiennent `id`, `establishmentId`, `academicYearId`, `schoolClassId`, `code`, `name`, `enabled`, `createdAt` et `updatedAt`. La liste contient ces mêmes objets. Une salle ne peut être archivée si une inscription (même d’un élève archivé) ou un créneau actif la référence : `409`. Déplacer d’abord les élèves et archiver les créneaux concernés. Une classe sans salle active ne peut recevoir de nouvelle inscription.
+Les réponses de création, modification et consultation contiennent `id`, `establishmentId`, `academicYearId`, `schoolClassId`, `code`, `name`, `maxStudents`, `enabled`, `createdAt` et `updatedAt`. La liste contient ces mêmes objets. Une salle ne peut être archivée si une inscription (même d’un élève archivé) ou un créneau actif la référence : `409`. Déplacer d’abord les élèves et archiver les créneaux concernés. Une salle pleine refuse toute nouvelle inscription et tout transfert entrant (`409`).
 
-Erreurs : UUID/corps/code/nom invalide : `400` ; JWT absent, invalide ou expiré : `401` ; permission ou licence insuffisante : `403` ; établissement, année, classe ou salle absent, archivé ou hors périmètre : `404` ; code déjà utilisé dans la classe ou archivage d’une salle référencée : `409`. Les données d’une autre classe, année ou école ne peuvent pas être sélectionnées en modifiant les UUID.
+Erreurs : UUID/corps/code/nom/capacité invalide (capacité absente, non entière ou inférieure à 1) : `400` ; JWT absent, invalide ou expiré : `401` ; permission ou licence insuffisante : `403` ; établissement, année, classe ou salle absent, archivé ou hors périmètre : `404` ; code déjà utilisé dans la classe, capacité réduite sous l’effectif inscrit ou archivage d’une salle référencée : `409`. Les données d’une autre classe, année ou école ne peuvent pas être sélectionnées en modifiant les UUID.
 
 ### Affectations classe-matière
 
@@ -494,7 +542,7 @@ La classe et la matière doivent appartenir au même établissement. Réaffecter
 Base : `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover`.
 `establishmentId` et `academicYearId` sont des UUID ; l’année dans l’URL est l’année **cible**, existante et active.
 
-Les deux opérations requièrent un JWT avec `can_school_year_rollover`, attribuée par V10 à `ESTABLISHMENT_ADMIN` et délégable aux rôles de l’établissement. Le service revérifie le compte actif/non verrouillé, les permissions actuelles en base, le rattachement à un employé actif du même établissement et la licence `SCHOOL_MANAGEMENT`. Un compte plateforme seul ou un parent seul n’a pas accès à cette opération. Renouveler le JWT après attribution de la permission.
+Les deux opérations requièrent un JWT avec `can_school_year_rollover`, attribuée par V10 à `ESTABLISHMENT_ADMIN` et délégable aux rôles de l’établissement. Le service revérifie le compte actif/non verrouillé, le rattachement à un employé actif du même établissement et la licence `SCHOOL_MANAGEMENT`. Un compte plateforme seul ou un parent seul n’a pas accès à cette opération. Les autorités sont relues en base à chaque requête.
 
 ### `GET .../classrooms/rollover`
 
@@ -505,7 +553,7 @@ Réponse `200 OK` :
 
 - `targetYear`, `sourceYear` : fiches d’années (`id`, `establishmentId`, `name`, `startsOn`, `endsOn`, `enabled`, dates d’audit). En l’absence d’année précédente, `sourceYear: null`, `classrooms: []`, `fees: []`.
 - `classrooms` : objets `{classroom, schoolClass, subjects}`. Toutes les salles de la source, même archivées, sont proposées avec leur état ; la classe inclut son code, nom et sa série. `subjects` contient les matières encore actives et affectées activement à cette classe. Les matières sont définies au niveau de la classe, partagées entre ses salles.
-- `financeAvailable` : droit de licence `TUITION` actif ; si faux, les trois listes financières sont vides.
+- `financeAvailable` : accès à `TUITION` par licence active ; si faux, les trois listes financières sont vides.
 - `fees` : définitions actives de frais annuels ou affectés aux classes de la source (format `TuitionFeeResponse` : identifiant, type, nom, montant, devise, échéance, portée et `schoolClassIds`). Les frais individuels sont exclus.
 - `feeTypes`, `paymentMethods` : types et moyens de paiement actifs de l’établissement, au format des endpoints existants. Leur configuration est commune aux années ; elle est réutilisée sans duplication.
 
@@ -570,7 +618,7 @@ Base des routes par salle, notée `B` ci-dessous : `/api/v1/establishments/{esta
 
 Tous les identifiants de chemin sont des UUID. Le compte authentifié doit être actif, non verrouillé, rattaché à un membre du personnel actif de cette école, avec la permission de l’action. Le lien au compte, les rôles actifs et les permissions actuelles sont revérifiés en base ; un JWT contenant une ancienne permission ne suffit pas après révocation. La fonctionnalité `SCHOOL_MANAGEMENT` doit être active. L’école, l’année, la classe et la salle doivent être actives et cohérentes. Aucun accès parent n’est ajouté. Le rôle plateforme `ADMIN` n’obtient pas ces permissions par défaut.
 
-La migration V9 attribue `can_timetable_read`, `can_timetable_create`, `can_timetable_update`, `can_timetable_delete` et `can_timetable_copy` à `ESTABLISHMENT_ADMIN`. Ces droits sont assignables via les rôles locaux. Renouveler le jeton après attribution.
+La migration V9 attribue `can_timetable_read`, `can_timetable_create`, `can_timetable_update`, `can_timetable_delete` et `can_timetable_copy` à `ESTABLISHMENT_ADMIN`. Ces droits sont assignables via les rôles locaux. Les autorités sont résolues en base à chaque requête.
 
 | Méthode et URL | Permission | Réponse |
 |---|---|---|
@@ -717,23 +765,25 @@ Pour un règlement intégral, omettre `acceptAdvance` (ou le fixer à `false`) e
 
 La transaction crée l’inscription, génère/réutilise ses créances, enregistre les paiements et valide la décision. Un refus annule toutes les nouvelles écritures de la tentative, y compris un premier paiement valide si le suivant échoue ; aucun élève n’est ajouté à la classe après une tentative échouée. Les créations de frais et d’inscriptions d’une même année sont sérialisées afin de vérifier une grille cohérente. Les numéros de reçus peuvent présenter des trous après annulation, sans réutilisation.
 
-Réponse `201 Created` avec les champs d’inscription ci-dessus et `payments`, tableau des encaissements créés par cette requête. Chaque paiement contient `id`, `feeId`, `chargeId`, `receiptNumber`, `amount`, `currency`, `paymentMethodCode`, `paymentMethodName`, `reference`, `receivedAt`, `recordedBy`, `totalPaid` et `balance`. `totalPaid` et `balance` concernent sa créance, dans sa devise. Le reçu détaillé reste consultable via `GET /api/v1/establishments/{establishmentId}/payments/{paymentId}/receipt` avec `can_payment_receipt_read`. Les versements ultérieurs utilisent l’endpoint existant de paiement d’une créance.
+Réponse `201 Created` avec les champs d’inscription ci-dessus et `payments`, tableau des encaissements créés par cette requête. Chaque paiement contient `id`, `feeId`, `chargeId`, `receiptNumber`, `amount`, `currency`, `paymentMethodCode`, `paymentMethodName`, `reference`, `receivedAt`, `recordedBy`, `totalPaid` et `balance`. `totalPaid` et `balance` concernent sa créance, dans sa devise. Le reçu détaillé reste consultable via `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/payments/{paymentId}/receipt` avec `can_payment_receipt_read`. Les versements ultérieurs utilisent l’endpoint existant de paiement d’une créance.
 
-Erreurs : corps/UUID/montant invalide, mode de paiement inactif/inconnu, doublon de `feeId` ou liste invalide : `400` ; JWT absent/invalide/expiré : `401` ; permission, licence ou périmètre du compte insuffisant : `403` ; élève, année, classe, salle ou frais absent, archivé ou hors périmètre : `404` ; inscription déjà existante, surpaiement ou paiement ne satisfaisant pas la décision : `409`. Un refus de paiement obligatoire renvoie un `ProblemDetail` avec `code: "ENROLLMENT_PAYMENT_REQUIRED"` et `unpaidFeeIds` (frais non soldés par la tentative). Aucun paiement de la tentative n’est conservé ; renvoyer l’ensemble des versements souhaités après correction.
+Erreurs : corps/UUID/montant invalide, mode de paiement inactif/inconnu, doublon de `feeId` ou liste invalide : `400` ; JWT absent/invalide/expiré : `401` ; permission, licence ou périmètre du compte insuffisant : `403` ; élève, année, classe, salle ou frais absent, archivé ou hors périmètre : `404` ; inscription déjà existante, salle à sa capacité maximale, surpaiement ou paiement ne satisfaisant pas la décision : `409`. Un refus de paiement obligatoire renvoie un `ProblemDetail` avec `code: "ENROLLMENT_PAYMENT_REQUIRED"` et `unpaidFeeIds` (frais non soldés par la tentative). Aucun paiement de la tentative n’est conservé ; renvoyer l’ensemble des versements souhaités après correction.
 
 La migration V8 préserve les inscriptions et paiements antérieurs, sans inventer de règlement ni d’auteur. Les nouveaux frais créés après une inscription restent des créances à régler ; ils n’annulent pas rétroactivement l’inscription existante. Les contrôles du paiement concernent la création, et un changement de salle ne rejoue aucun encaissement.
 
 ### `PATCH /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments/{enrollmentId}`
 
-Requiert `can_enrollment_update`, attribuée par la migration V7 à `ESTABLISHMENT_ADMIN` et assignable via les rôles locaux. Renouveler le jeton après attribution. Les identifiants de chemin sont des UUID ; l’inscription doit appartenir à l’année et à l’établissement accessibles au compte.
+Requiert `can_enrollment_update`, attribuée par la migration V7 à `ESTABLISHMENT_ADMIN` et assignable via les rôles locaux. Les autorités sont résolues en base à chaque requête. Les identifiants de chemin sont des UUID ; l’inscription doit appartenir à l’année et à l’établissement accessibles au compte.
 
 ```json
 {"classroomId":"<uuid-nouvelle-salle>"}
 ```
 
+La salle cible doit disposer d’une place libre ; un transfert vers une salle pleine renvoie `409 Conflict`.
+
 `classroomId` est obligatoire, non nul et doit désigner une salle active de la même classe. L’élève, la classe et l’année doivent rester actifs. La réponse `200 OK` contient l’inscription avec sa nouvelle salle ; son `id`, sa date de création, son élève, sa classe et son année restent les mêmes. Les présences restent liées à cette inscription et aucun frais n’est réappliqué. Réaffecter la salle actuelle est permis. La distribution par salle reflète l’affectation actuelle ; aucun historique séparé des changements de salle n’est exposé.
 
-Erreurs : corps/UUID invalide ou `classroomId` absent/null : `400` ; JWT absent/invalide/expiré : `401` ; permission ou licence insuffisante : `403` ; inscription, élève, année, classe ou salle absent, archivé ou hors périmètre (y compris une salle d’une autre classe) : `404`.
+Erreurs : corps/UUID invalide ou `classroomId` absent/null : `400` ; JWT absent/invalide/expiré : `401` ; permission ou licence insuffisante : `403` ; inscription, élève, année, classe ou salle absent, archivé ou hors périmètre (y compris une salle d’une autre classe) : `404` ; salle cible pleine : `409`.
 
 ### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/students`
 
@@ -747,13 +797,14 @@ Les états enregistrés sont `PRESENT` et `ABSENT`. L’état `NON_RENSEIGNE` es
 
 ### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance?date=YYYY-MM-DD`
 
-Requiert `can_attendance_read`. Retourne une ligne par élève actif inscrit dans la classe et les totaux présents, absents et non renseignés.
+Requiert `can_attendance_read`. Retourne une ligne par élève actif inscrit dans la classe et les totaux présents, absents et non renseignés. Le paramètre de requête facultatif `classroomId` (UUID) limite les élèves et tous les compteurs à cette salle active de la classe, de l’année et de l’établissement demandés. Exemple : `GET .../attendance?date=2026-02-12&classroomId=<uuid-salle>`. Sans filtre, toutes les salles sont incluses. Le champ `classroomId` de la réponse indique le filtre ou vaut `null` pour la classe entière.
 
 ```json
 {
 	"establishmentId": "<uuid-etablissement>",
 	"academicYearId": "<uuid-annee>",
 	"schoolClassId": "<uuid-classe>",
+	"classroomId": null,
 	"date": "2026-02-12",
 	"presentCount": 1,
 	"absentCount": 1,
@@ -765,14 +816,15 @@ Requiert `can_attendance_read`. Retourne une ligne par élève actif inscrit dan
 }
 ```
 
-Une entrée non renseignée a `status: "NON_RENSEIGNE"`, `absenceJustified: false`, et ses champs de pointage/commentaire/audit valent `null`. Année ou classe absente/inactive/hors périmètre : `404`; date invalide ou hors année : `400`; permission absente : `403`.
+Une entrée non renseignée a `status: "NON_RENSEIGNE"`, `absenceJustified: false`, et ses champs de pointage/commentaire/audit valent `null`. Année, classe ou salle demandée absente/inactive/hors périmètre (y compris salle d’une autre classe/année/école) : `404`; date ou UUID de salle invalide, ou date hors année : `400`; permission absente : `403`.
 
 ### `PUT /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance/{date}`
 
-Requiert `can_attendance_write`. Upsert idempotent par inscription et date : une répétition avec les mêmes valeurs ne crée pas de doublon et ne change pas les horodatages; les élèves omis restent inchangés. Pour changer une ligne existante, le client doit transmettre `expectedUpdatedAt` égal à son `updatedAt` courant; une version absente ou périmée renvoie `409 Conflict`. Une répétition strictement identique peut omettre cette version. Les corrections valides mettent à jour `updatedBy` et `updatedAt`, en conservant `createdBy` et `createdAt`. Les entrées identiques répétées dans le même lot sont acceptées; deux entrées contradictoires pour le même élève rejettent tout le lot. Le lot entier est validé avant écriture et exécuté dans une transaction.
+Requiert `can_attendance_write`. `classroomId` est obligatoire dans le corps, même si la classe ne comporte qu’une seule salle. Il doit identifier une salle active appartenant à la classe, à l’année et à l’établissement de l’URL. Chaque élève transmis doit être activement inscrit dans cette salle ; un élève d’une autre salle de la même classe est refusé. Upsert idempotent par inscription et date : une répétition avec les mêmes valeurs ne crée pas de doublon et ne change pas les horodatages; les élèves omis restent inchangés. Pour changer une ligne existante, le client doit transmettre `expectedUpdatedAt` égal à son `updatedAt` courant; une version absente ou périmée renvoie `409 Conflict`. Une répétition strictement identique peut omettre cette version. Les corrections valides mettent à jour `updatedBy` et `updatedAt`, en conservant `createdBy` et `createdAt`. La classe est verrouillée pendant la validation et l’écriture, comme lors des changements de salle, pour empêcher un transfert de rendre le lot incohérent. Les entrées identiques répétées dans le même lot sont acceptées; deux entrées contradictoires pour le même élève rejettent tout le lot. Le lot entier est validé avant écriture et exécuté dans une transaction.
 
 ```json
 {
+	"classroomId": "<uuid-salle>",
 	"entries": [
 		{"studentId":"<uuid-eleve-1>","status":"PRESENT"},
 		{"studentId":"<uuid-eleve-2>","status":"ABSENT","absenceJustified":true,"comment":"Maladie signalée"}
@@ -780,9 +832,11 @@ Requiert `can_attendance_write`. Upsert idempotent par inscription et date : une
 }
 ```
 
-Pour corriger ultérieurement cette absence, transmettre la version `updatedAt` retournée par la feuille : `{"entries":[{"studentId":"<uuid-eleve-2>","status":"PRESENT","expectedUpdatedAt":"2026-02-12T08:06:00Z"}]}`. Une répétition sans changement peut réutiliser l’entrée sans version; toute correction différente exige la version courante.
+Pour corriger ultérieurement cette absence, transmettre la version `updatedAt` retournée par la feuille : `{"classroomId":"<uuid-salle>","entries":[{"studentId":"<uuid-eleve-2>","status":"PRESENT","expectedUpdatedAt":"2026-02-12T08:06:00Z"}]}`. Une répétition sans changement peut réutiliser l’entrée sans version; toute correction différente exige la version courante.
 
-`absenceJustified` est facultatif, vaut `false` par défaut et ne peut être vrai que pour `ABSENT`. Le commentaire est facultatif et limité à 500 caractères. La réponse `200 OK` retourne la feuille recalculée. Lot vide, élève non inscrit dans cette classe/année, doublons contradictoires, date invalide ou justification incohérente : `400`; contexte absent/inactif/hors périmètre : `404`; écriture concurrente incompatible : `409`; l’écriture partielle du lot est annulée.
+`absenceJustified` est facultatif, vaut `false` par défaut et ne peut être vrai que pour `ABSENT`. Le commentaire est facultatif et limité à 500 caractères. La réponse `200 OK` retourne la feuille recalculée pour la salle choisie, avec `classroomId` renseigné ; les élèves et compteurs des autres salles sont exclus. La salle est contrôlée via l’inscription existante : aucun pointage historique n’est supprimé et l’unicité par inscription/date est conservée. Cette évolution ne nécessite pas de migration de données.
+
+Salle absente, `null` ou UUID mal formé dans le corps, lot vide, entrée `null`, élève non inscrit dans cette salle/classe/année, doublons contradictoires, date invalide ou justification incohérente : `400`; contexte ou salle absente/inactive/hors périmètre : `404`; JWT absent/invalide : `401`; permission, compte ou licence insuffisants : `403`; écriture concurrente incompatible : `409`; l’écriture partielle du lot est annulée.
 
 ### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD`
 
@@ -900,7 +954,7 @@ Erreurs : corps/UUID/montant/devise/échéance invalide, tableau vide ou contena
 
 Requiert `can_tuition_apply`. Applique la définition aux inscriptions présentes de toutes les classes ciblées, utile après l’ajout de nouveaux élèves. La sélection de classes persistée est réutilisée ; un frais pour plusieurs classes ne devient jamais annuel lors de la réapplication. L’opération est idempotente : une créance existante n’est pas dupliquée. Réponse `200 OK` avec `chargesCreated`, total des nouvelles créances.
 
-### `GET /api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees`
+### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees`
 
 Requiert `can_tuition_read`. Retourne les créances de l’élève, leurs paiements, le total payé, le solde et l’indicateur `overdue`.
 
@@ -908,7 +962,7 @@ Requiert `can_tuition_read`. Retourne les créances de l’élève, leurs paieme
 
 Requiert `can_tuition_outstanding_read`. Retourne toutes les créances avec un solde positif de l’année; `overdue` distingue celles dont l’échéance est passée.
 
-### `POST /api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees/{chargeId}/payments`
+### `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees/{chargeId}/payments`
 
 Requiert `can_payment_record`. Enregistre un paiement partiel ou total avec une méthode configurée pour l’établissement. Le serveur attribue le numéro de reçu et l’horodatage; une référence externe est facultative.
 
@@ -922,7 +976,7 @@ Requiert `can_payment_record`. Enregistre un paiement partiel ou total avec une 
 
 Réponse `201 Created` avec le paiement, son `receiptNumber` et ses informations d’enregistrement. Créance absente ou hors périmètre : `404`; dépassement du solde : `409`; méthode inconnue ou montant invalide : `400`.
 
-### `GET /api/v1/establishments/{establishmentId}/payments/{paymentId}/receipt`
+### `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/payments/{paymentId}/receipt`
 
 Requiert `can_payment_receipt_read`. Retourne le reçu JSON immuable : numéro unique, élève et frais tels qu’enregistrés, montant reçu, méthode, référence, auteur et solde après ce paiement. Le reçu peut être retrouvé par l’identifiant du paiement; la réponse ne modifie pas l’historique.
 
@@ -930,7 +984,7 @@ Les définitions, créances et paiements ne disposent pas de routes de modificat
 
 ### Gestion des postes
 
-Les endpoints de gestion sont portés par le module `positions`. Ils nécessitent respectivement `can_position_read`, `can_position_create`, `can_position_update`, `can_position_assign_roles` et `can_position_delete`; ces permissions sont attribuées aux rôles `ADMIN` et `ESTABLISHMENT_ADMIN`. Le service limite ensuite un responsable au seul établissement auquel il est rattaché. Un poste (`Position`) appartient à un seul établissement. Une fiche de personnel référence son poste par `positionId`; les rôles effectifs d’un membre sont l’union de ses rôles directs et des rôles du poste. Un poste peut recevoir plusieurs rôles actifs du catalogue, y compris les rôles personnalisés créés par l’administration. `ADMIN` et `PARENT` sont réservés et ne peuvent pas être attribués à un poste.
+Les endpoints de gestion sont portés par le module `positions`. Ils nécessitent respectivement `can_position_read`, `can_position_create`, `can_position_update`, `can_position_assign_roles` et `can_position_delete`; ces permissions sont attribuées aux rôles `ADMIN` et `ESTABLISHMENT_ADMIN`. Le service limite ensuite un responsable au seul établissement auquel il est rattaché. Un poste (`Position`) appartient à un seul établissement. Une fiche de personnel référence son poste par `positionId`; les rôles effectifs d’un membre sont l’union de ses rôles directs et des rôles du poste. Un poste peut recevoir plusieurs rôles actifs du catalogue, y compris les rôles personnalisés créés par l’administration. `ADMIN` et `PARENT` sont réservés et ne peuvent pas être attribués à un poste. Tout rôle doté du périmètre PLATFORM ou de permissions plateforme est également refusé pour empêcher une délégation de périmètre.
 
 #### `GET /api/v1/establishments/{establishmentId}/positions`
 
@@ -1088,10 +1142,10 @@ Un utilisateur authentifié sans la permission reçoit `403 Forbidden`.
 
 Toutes les routes ci-dessous requièrent `can_guardian_read_children`. Chaque requête vérifie que le compte authentifié a toujours un lien actif avec l’élève, que l’élève et l’établissement sont actifs et que l’inscription correspond à l’année demandée. Le portail exige une licence active avec `PARENT_PORTAL`; les appels financiers requièrent également `TUITION` et les présences `ATTENDANCE`. Les montants sont totalisés séparément par devise.
 
-- `GET /api/v1/guardians/me/children/{studentId}/summary?academicYearId={uuid}` — identité scolaire, établissement, année, classe et soldes par devise (`amountBilled`, `amountPaid`, `balance`).
-- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees` — créances de l’enfant pour l’année avec paiements et soldes, sans identité ou audit interne.
-- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees/{chargeId}/payments?from=YYYY-MM-DD&to=YYYY-MM-DD` — paiements d’une créance; dates inclusives, plage limitée à 366 jours.
-- `GET /api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` — pointages d’inscriptions, plage inclusive maximale de 366 jours.
+- `GET /api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/summary` — identité scolaire, établissement, année, classe et soldes par devise (`amountBilled`, `amountPaid`, `balance`).
+- `GET /api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees` — créances de l’enfant pour l’année avec paiements et soldes, sans identité ou audit interne.
+- `GET /api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees/{chargeId}/payments?from=YYYY-MM-DD&to=YYYY-MM-DD` — paiements d’une créance; dates inclusives, plage limitée à 366 jours.
+- `GET /api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/attendance?from=YYYY-MM-DD&to=YYYY-MM-DD` — pointages d’inscriptions, plage inclusive maximale de 366 jours.
 
 Les réponses de présence exposent seulement `parentComment` comme commentaire destiné à la famille. Le commentaire interne, `createdBy` et `updatedBy` ne sont jamais retournés. Une relation absente, inactive ou hors périmètre renvoie `404`; permission/licence refusée `403`; période invalide `400`.
 
@@ -1135,7 +1189,7 @@ Sécurité et erreurs : JWT Bearer requis (`401` si absent, invalide ou expiré)
 
 Les uploads acceptent PDF, PNG, JPG/JPEG, WEBP, TXT, DOCX et PPTX uniquement avec leur type MIME autorisé correspondant. La limite par défaut est 10 MiB (`LEARNING_MAX_FILE_SIZE_BYTES` et `spring.servlet.multipart.max-file-size`), stockée hors du webroot dans `${LEARNING_STORAGE_ROOT}` ou le dossier temporaire privé par défaut. Le serveur crée une clé UUID; aucun chemin disque n’est renvoyé. Une pièce jointe n’est pas supprimable séparément; archiver le contenu masque ses pièces jointes aux parents.
 
-Base des routes parent : `/api/v1/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content`.
+Base des routes parent : `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content`.
 
 - `GET` — liste paginée des seuls contenus `PUBLISHED` de la classe où l’enfant est inscrit; accepte `type`, `page`, `size`.
 - `GET /{contentId}` — détail publié uniquement.
@@ -1149,24 +1203,24 @@ L’établissement est le titulaire du droit d’accès, conformément au modèl
 
 La baseline V1 crée l’offre de référence `LEGACY_FULL_ACCESS`, sans établissement ni licence de test préchargés. Les nouveaux établissements ne reçoivent pas de licence implicite : un administrateur plateforme doit en attribuer une. Les changements de licence verrouillent la ligne établissement et refusent les chevauchements avec une licence future; une licence antérieure chevauchante est terminée au début de sa remplaçante.
 
-- `GET /api/v1/establishments/{establishmentId}/license` — `can_license_read` (ou `ROLE_ADMIN`); établissement strictement limité au périmètre autorisé.
-- `GET /api/v1/admin/license-offers` — rôle `ADMIN` uniquement; catalogue actif.
-- `POST /api/v1/admin/license-offers` — rôle `ADMIN`; crée une offre (`code`, `name`, `features`), réponse `201 Created`.
-- `POST /api/v1/admin/establishments/{establishmentId}/licenses` — rôle `ADMIN`; attribue/remplace une licence (`offerId`, `validFrom` facultatif, `validUntil` facultatif), réponse `201 Created`.
-- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/suspend` — rôle `ADMIN`; suspend une licence active ou à venir.
-- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/reactivate` — rôle `ADMIN`; réactive une licence suspendue non expirée.
-- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/end` — rôle `ADMIN`; termine immédiatement une licence en cours.
-- `GET /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/events` — rôle `ADMIN`; historique d’audit.
+- `GET /api/v1/establishments/{establishmentId}/license` — `can_license_read`; établissement strictement limité au périmètre autorisé.
+- `GET /api/v1/admin/license-offers` — `can_license_offer_read`; catalogue actif.
+- `POST /api/v1/admin/license-offers` — `can_license_offer_create`; crée une offre (`code`, `name`, `features`), réponse `201 Created`.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses` — `can_license_assign`; attribue/remplace une licence (`offerId`, `validFrom` facultatif, `validUntil` facultatif), réponse `201 Created`.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/suspend` — `can_license_suspend`; suspend une licence active ou à venir.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/reactivate` — `can_license_reactivate`; réactive une licence suspendue non expirée.
+- `POST /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/end` — `can_license_end`; termine immédiatement une licence en cours.
+- `GET /api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/events` — `can_license_event_read`; historique d’audit.
 
-Code d’offre ou période invalide : `400`; offre/établissement/licence absent : `404`; état incompatible, offre en doublon ou chevauchement non remplaçable : `409`; rôle ou permission absente : `403`. Les contrôles d’entitlement sont appliqués côté services métier, en plus des permissions HTTP. Les routes d’authentification, de santé et d’administration de licences restent utilisables même lorsqu’une licence est suspendue/expirée.
+Code d’offre ou période invalide : `400`; offre/établissement/licence absent : `404`; état incompatible, offre en doublon ou chevauchement non remplaçable : `409`; permission ou périmètre absent : `403`. Les contrôles d’entitlement sont appliqués côté services métier, en plus des permissions HTTP. Les routes d’authentification, de santé et d’administration de licences restent utilisables même lorsqu’une licence est suspendue/expirée.
 
 ## Personnel
 
-Les routes de gestion requièrent `ADMIN_ACCESS` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. Un responsable d’établissement ne voit et ne gère que le personnel de son établissement; l’administrateur global conserve l’accès global.
+Les routes de gestion du personnel requièrent `can_employee_create/read/update/delete/assign_roles` selon l’action et un établissement explicite dans le chemin. Un rattachement actif au contexte ou une habilitation PLATFORM est nécessaire ; cette habilitation ne remplace aucune permission.
 
-### `POST /api/v1/employees`
+### `POST /api/v1/establishments/{establishmentId}/employees`
 
-Crée une fiche de personnel et envoie une invitation par courriel. Un responsable d’établissement ne peut pas attribuer directement `ESTABLISHMENT_ADMIN`, mais le membre peut hériter de ce rôle si son poste le porte.
+Crée une fiche de personnel et envoie une invitation par courriel. L’attribution directe de `ESTABLISHMENT_ADMIN` requiert en plus `can_employee_assign_administrator`, mais le membre peut hériter de ce rôle si son poste le porte.
 
 ```json
 {
@@ -1194,21 +1248,21 @@ Accepte une invitation sans JWT. Le token reçu par courriel est à usage unique
 
 Réponse : `204 No Content`. Un token invalide, expiré ou déjà utilisé renvoie `401 Unauthorized`.
 
-### `GET /api/v1/employees/me`
+### `GET /api/v1/establishments/{establishmentId}/employees/me`
 
-Retourne la fiche associée au compte connecté. Requiert la permission `STAFF_ACCESS`.
+Retourne la fiche associée au compte connecté. Requiert `can_employee_read_self` et un rattachement actif au contexte demandé.
 
-### `GET /api/v1/employees`
+### `GET /api/v1/establishments/{establishmentId}/employees`
 
-Requiert `ADMIN_ACCESS` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. Retourne le personnel visible dans le périmètre de l’appelant : tous les établissements pour l’administrateur global, son établissement pour le responsable.
+Requiert la permission de l’opération indiquée dans le tableau ci-dessous et le périmètre explicite de l’établissement. Retourne le personnel visible dans le périmètre de l’appelant : uniquement l’établissement indiqué dans le chemin, même pour un compte habilité plateforme.
 
-### `GET /api/v1/employees/{employeeId}`
+### `GET /api/v1/establishments/{establishmentId}/employees/{employeeId}`
 
 Retourne une fiche dans le périmètre de l’appelant. Une fiche hors périmètre est masquée par `404 Not Found`.
 
-### `PATCH /api/v1/employees/{employeeId}`
+### `PATCH /api/v1/establishments/{establishmentId}/employees/{employeeId}`
 
-Requiert `ADMIN_ACCESS` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. Met à jour partiellement le matricule, le prénom, le nom, l’email ou le poste avec `positionId`. Le nouveau poste doit appartenir au même établissement. Au moins un champ doit être fourni. L’email est également utilisé comme login; sa modification synchronise le compte de sécurité et un changement de poste recalcule ses rôles effectifs. Le rôle `PARENT` et les liens tuteur/enfant existants sont conservés.
+Requiert la permission de l’opération indiquée dans le tableau ci-dessous et le périmètre explicite de l’établissement. Met à jour partiellement le matricule, le prénom, le nom, l’email ou le poste avec `positionId`. Le nouveau poste doit appartenir au même établissement. Au moins un champ doit être fourni. L’email est également utilisé comme login; sa modification synchronise le compte de sécurité et un changement de poste recalcule ses rôles effectifs. Le rôle `PARENT` et les liens tuteur/enfant existants sont conservés.
 
 ```json
 {
@@ -1218,7 +1272,7 @@ Requiert `ADMIN_ACCESS` ou `ESTABLISHMENT_STAFF_MANAGEMENT`. Met à jour partiel
 
 Réponse `200 OK` avec la fiche à jour. Une fiche hors périmètre renvoie `404`; un matricule ou email déjà utilisé renvoie `409`.
 
-### `PUT /api/v1/employees/{employeeId}/roles`
+### `PUT /api/v1/establishments/{establishmentId}/employees/{employeeId}/roles`
 
 Remplace les rôles directs du membre. Les valeurs acceptées pour les rôles directs restent `STAFF` et `ESTABLISHMENT_ADMIN`; les rôles effectifs incluent aussi les rôles personnalisés hérités du poste. Les rôles personnalisés se gèrent au niveau des postes, pas via cette route. Le rôle `PARENT`, ajouté par un rattachement comme tuteur, est conservé lors de la synchronisation des rôles du personnel ou du poste.
 
@@ -1230,9 +1284,9 @@ Remplace les rôles directs du membre. Les valeurs acceptées pour les rôles di
 
 Réponse `200 OK` avec la fiche mise à jour. Les rôles inconnus ou le rôle `ADMIN` renvoient `400`; une cible hors périmètre renvoie `404`.
 
-### `DELETE /api/v1/employees/{employeeId}`
+### `DELETE /api/v1/establishments/{establishmentId}/employees/{employeeId}`
 
-Désactive le membre sans supprimer sa fiche. Le compte de sécurité est également désactivé et ses refresh tokens révoqués. Réservé à `ADMIN` ou à l’administrateur du même établissement.
+Désactive le membre sans supprimer sa fiche. Le compte de sécurité est également désactivé et ses refresh tokens révoqués. Requiert `can_employee_delete` et le périmètre demandé.
 
 Réponse `204 No Content`; une fiche hors périmètre renvoie `404`.
 
@@ -1240,7 +1294,7 @@ Réponse `204 No Content`; une fiche hors périmètre renvoie `404`.
 
 Configurer `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_AUTH`, `SMTP_STARTTLS`, `EMPLOYEE_INVITATION_FROM`, `EMPLOYEE_INVITATION_ACCEPT_URL`, `GUARDIAN_INVITATION_FROM` et `GUARDIAN_INVITATION_ACCEPT_URL` selon l’environnement. Les anciennes variables `STAFF_INVITATION_FROM` et `STAFF_INVITATION_ACCEPT_URL` restent acceptées en fallback. Les URL d’acceptation doivent pointer vers les écrans fournis par le client web; le dépôt actuel expose seulement l’API. Le token est placé dans le fragment de l’URL (`#token=...`) afin qu’il ne soit pas envoyé aux journaux HTTP du serveur frontal. Le client lit ce fragment puis appelle la route d’acceptation correspondante avec le token et le mot de passe choisi.
 
-L’origine de ces liens se configure dans `src/main/resources/application.yaml`, sous `app.invitations.scheme` (`http` par défaut), `app.invitations.host` (`localhost`) et `app.invitations.port` (`3000`). Les variables `INVITATION_SCHEME`, `INVITATION_HOST` et `INVITATION_PORT` permettent de remplacer ces valeurs par environnement. L’hôte doit être renseigné sans protocole, port ni chemin ; le port est celui du client web, distinct de l’API et de SMTP. Par exemple, `https`, `ecole.example.org`, `443` donnent `https://ecole.example.org:443/accept-invitation#token=...` pour le personnel et le premier administrateur d’école, et `https://ecole.example.org:443/accept-guardian-invitation#token=...` pour les tuteurs. Une URL complète fournie par `EMPLOYEE_INVITATION_ACCEPT_URL` (prioritaire sur `STAFF_INVITATION_ACCEPT_URL`) ou `GUARDIAN_INVITATION_ACCEPT_URL` remplace entièrement cette construction.
+L’origine de ces liens se configure dans `src/main/resources/application.yaml`, sous `app.invitations.scheme` (`http` par défaut), `app.invitations.host` (`localhost`) et `app.invitations.port` (`4200`). Les variables `INVITATION_SCHEME`, `INVITATION_HOST` et `INVITATION_PORT` permettent de remplacer ces valeurs par environnement. L’hôte doit être renseigné sans protocole, port ni chemin ; le port est celui du client web, distinct de l’API et de SMTP. Par exemple, `https`, `ecole.example.org`, `443` donnent `https://ecole.example.org:443/accept-invitation#token=...` pour le personnel et le premier administrateur d’école, et `https://ecole.example.org:443/accept-guardian-invitation#token=...` pour les tuteurs. Une URL complète fournie par `EMPLOYEE_INVITATION_ACCEPT_URL` (prioritaire sur `STAFF_INVITATION_ACCEPT_URL`) ou `GUARDIAN_INVITATION_ACCEPT_URL` remplace entièrement cette construction.
 
 ## Santé de l’application
 
@@ -1259,3 +1313,152 @@ Retourne l’état de santé de l’application. Cette route est accessible sans
 ## Interface de développement
 
 La console H2 est une interface Web, pas une route REST. Elle est activée uniquement avec le profil `local` et accessible à `http://localhost:8080/h2-console`. Connexion locale : URL JDBC `jdbc:h2:mem:gestion_ecole`, utilisateur `sa`, mot de passe vide.
+
+## Permissions explicites par opération (V18)
+
+Ce tableau décrit le contrôle fonctionnel de chaque méthode. Les sections précédentes détaillent les corps, réponses et erreurs métier. Les chemins contenant `{establishmentId}` exigent le périmètre correspondant ; ceux contenant `{academicYearId}` exigent en plus l’appartenance de l’année. Les endpoints de lecture ne prennent pas de corps ; les créations/modifications conservent leurs DTO documentés. Les méthodes de suppression ou acceptation renvoient `204`, les créations `201`, les autres opérations `200`, selon leurs sections détaillées.
+
+| Méthode | URL | Expression `@PreAuthorize` |
+| --- | --- | --- |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance` | `hasAuthority('can_attendance_read')` |
+| PUT | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/attendance/{date}` | `hasAuthority('can_attendance_write')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/attendance` | `hasAuthority('can_attendance_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/employees` | `hasAuthority('can_employee_create') and (#request.directRoleCodes() == null or !#request.directRoleCodes().contains('ESTABLISHMENT_ADMIN') or hasAuthority('can_employee_assign_administrator'))` |
+| PATCH | `/api/v1/establishments/{establishmentId}/employees/{employeeId}` | `hasAuthority('can_employee_update')` |
+| PUT | `/api/v1/establishments/{establishmentId}/employees/{employeeId}/roles` | `hasAuthority('can_employee_assign_roles') and (!#request.roleCodes().contains('ESTABLISHMENT_ADMIN') or hasAuthority('can_employee_assign_administrator'))` |
+| DELETE | `/api/v1/establishments/{establishmentId}/employees/{employeeId}` | `hasAuthority('can_employee_delete')` |
+| POST | `/api/v1/employees/invitations/accept` | `PUBLIC` |
+| GET | `/api/v1/establishments/{establishmentId}/employees` | `hasAuthority('can_employee_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/employees/me` | `hasAuthority('can_employee_read_self')` |
+| GET | `/api/v1/establishments/{establishmentId}/employees/{employeeId}` | `hasAuthority('can_employee_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/students` | `hasAuthority('can_enrollment_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments` | `hasAuthority('can_enrollment_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments` | `hasAuthority('can_enrollment_create') and (#request.payments() == null or #request.payments().isEmpty() or hasAuthority('can_payment_record'))` |
+| PATCH | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/enrollments/{enrollmentId}` | `hasAuthority('can_enrollment_update')` |
+| GET | `/api/v1/establishments` | `hasAuthority('can_establishment_read')` |
+| POST | `/api/v1/establishments` | `hasAuthority('can_establishment_onboard')` |
+| PATCH | `/api/v1/establishments/{establishmentId}` | `hasAuthority('can_establishment_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}` | `hasAuthority('can_establishment_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/summary` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/tuition-fees/{chargeId}/payments` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/attendance` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}/attachments` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/learning-content/{contentId}/attachments/{attachmentId}` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/students/{studentId}/guardians` | `hasAuthority('can_guardian_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/students/{studentId}/guardians` | `hasAuthority('can_guardian_link')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/students/{studentId}/guardians/{guardianId}` | `hasAuthority('can_guardian_unlink')` |
+| POST | `/api/v1/guardians/invitations/accept` | `PUBLIC` |
+| GET | `/api/v1/guardians/me/children` | `hasAuthority('can_guardian_read_children')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content` | `hasAuthority('can_learning_content_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content` | `hasAuthority('can_learning_content_create')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}` | `hasAuthority('can_learning_content_read')` |
+| PUT | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}` | `hasAuthority('can_learning_content_update')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/publish` | `hasAuthority('can_learning_content_publish')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/archive` | `hasAuthority('can_learning_content_archive')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/attachments` | `hasAuthority('can_learning_content_update')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/attachments` | `hasAuthority('can_learning_content_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/learning-content/{contentId}/attachments/{attachmentId}` | `hasAuthority('can_learning_content_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/license` | `hasAuthority('can_license_read')` |
+| GET | `/api/v1/admin/license-offers` | `hasAuthority('can_license_offer_read')` |
+| POST | `/api/v1/admin/license-offers` | `hasAuthority('can_license_offer_create')` |
+| POST | `/api/v1/admin/establishments/{establishmentId}/licenses` | `hasAuthority('can_license_assign')` |
+| POST | `/api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/suspend` | `hasAuthority('can_license_suspend')` |
+| POST | `/api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/reactivate` | `hasAuthority('can_license_reactivate')` |
+| POST | `/api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/end` | `hasAuthority('can_license_end')` |
+| GET | `/api/v1/admin/establishments/{establishmentId}/licenses/{licenseId}/events` | `hasAuthority('can_license_event_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/positions` | `hasAuthority('can_position_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/positions` | `hasAuthority('can_position_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/positions/{positionId}` | `hasAuthority('can_position_update')` |
+| PUT | `/api/v1/establishments/{establishmentId}/positions/{positionId}/roles` | `hasAuthority('can_position_assign_roles')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/positions/{positionId}` | `hasAuthority('can_position_delete')` |
+| GET | `/api/v1/dashboard` | `hasAuthority('can_dashboard_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/dashboard` | `hasAuthority('can_dashboard_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover` | `hasAuthority('can_school_year_rollover')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover` | `hasAuthority('can_school_year_rollover')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms` | `hasAuthority('can_school_class_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}` | `hasAuthority('can_school_class_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms` | `hasAuthority('can_school_class_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}` | `hasAuthority('can_school_class_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}` | `hasAuthority('can_school_class_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years` | `hasAuthority('can_academic_year_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years` | `hasAuthority('can_academic_year_create')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}` | `hasAuthority('can_academic_year_read')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}` | `hasAuthority('can_academic_year_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}` | `hasAuthority('can_academic_year_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods` | `hasAuthority('can_academic_period_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods` | `hasAuthority('can_academic_period_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods/{periodId}` | `hasAuthority('can_academic_period_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/periods/{periodId}` | `hasAuthority('can_academic_period_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` | `hasAuthority('can_school_class_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` | `hasAuthority('can_school_class_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` | `hasAuthority('can_school_class_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` | `hasAuthority('can_school_class_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` | `hasAuthority('can_school_class_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/subjects` | `hasAuthority('can_class_subject_read')` |
+| PUT | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/subjects/{subjectId}` | `hasAuthority('can_class_subject_assign')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/subjects/{subjectId}` | `hasAuthority('can_class_subject_unassign')` |
+| GET | `/api/v1/establishments/{establishmentId}/subjects` | `hasAuthority('can_subject_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/subjects/{subjectId}` | `hasAuthority('can_subject_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/subjects` | `hasAuthority('can_subject_create')` |
+| POST | `/api/v1/establishments/{establishmentId}/subjects/batch` | `hasAuthority('can_subject_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/subjects/{subjectId}` | `hasAuthority('can_subject_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/subjects/{subjectId}` | `hasAuthority('can_subject_delete')` |
+| POST | `/api/v1/login` | `PUBLIC` |
+| POST | `/api/v1/refresh` | `PUBLIC` |
+| GET | `/api/v1/establishments/{establishmentId}/roles` | `hasAuthority('can_role_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/roles` | `hasAuthority('can_role_create')` |
+| PUT | `/api/v1/establishments/{establishmentId}/roles/{code}` | `hasAuthority('can_role_update')` |
+| GET | `/api/v1/establishments/{establishmentId}/permissions` | `hasAuthority('can_permission_read')` |
+| PUT | `/api/v1/user/me/password` | `hasAuthority('can_user_change_password')` |
+| POST | `/api/v1/role` | `hasAuthority('can_platform_role_create')` |
+| PUT | `/api/v1/role/{code}` | `hasAuthority('can_platform_role_update')` |
+| GET | `/api/v1/user` | `hasAuthority('can_user_read')` |
+| GET | `/api/v1/role` | `hasAuthority('can_platform_role_read')` |
+| GET | `/api/v1/permission` | `hasAuthority('can_permission_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/students` | `hasAuthority('can_student_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/students` | `hasAuthority('can_student_create')` |
+| GET | `/api/v1/establishments/{establishmentId}/students/{studentId}` | `hasAuthority('can_student_read')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/students/{studentId}` | `hasAuthority('can_student_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/students/{studentId}` | `hasAuthority('can_student_delete')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable` | `hasAuthority('can_timetable_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/{entryId}` | `hasAuthority('can_timetable_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable` | `hasAuthority('can_timetable_create')` |
+| PUT | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/{entryId}` | `hasAuthority('can_timetable_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/{entryId}` | `hasAuthority('can_timetable_delete')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/copy` | `hasAuthority('can_timetable_copy') and (#request.replaceExisting() == null or !#request.replaceExisting() or hasAuthority('can_timetable_delete'))` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/day` | `hasAuthority('can_timetable_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms/{classroomId}/timetable/week` | `hasAuthority('can_timetable_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/timetable/non-working-days` | `hasAuthority('can_timetable_read')` |
+| PUT | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/timetable/non-working-days` | `hasAuthority('can_timetable_update')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees` | `hasAuthority('can_tuition_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/tuition-fee-types` | `hasAuthority('can_tuition_fee_type_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/tuition-fee-types` | `hasAuthority('can_tuition_fee_type_create')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/tuition-fee-types/{feeTypeId}` | `hasAuthority('can_tuition_fee_type_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/tuition-fee-types/{feeTypeId}` | `hasAuthority('can_tuition_fee_type_delete')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees` | `hasAuthority('can_tuition_create')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/{feeId}/apply` | `hasAuthority('can_tuition_apply')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/tuition-fees/outstanding` | `hasAuthority('can_tuition_outstanding_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees` | `hasAuthority('can_tuition_read')` |
+| POST | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees/{chargeId}/payments` | `hasAuthority('can_payment_record')` |
+| GET | `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/payments/{paymentId}/receipt` | `hasAuthority('can_payment_receipt_read')` |
+| GET | `/api/v1/establishments/{establishmentId}/payment-methods` | `hasAuthority('can_tuition_read')` |
+| PUT | `/api/v1/establishments/{establishmentId}/payment-methods` | `hasAuthority('can_payment_method_update')` |
+| PATCH | `/api/v1/establishments/{establishmentId}/payment-methods/{code}` | `hasAuthority('can_payment_method_update')` |
+| DELETE | `/api/v1/establishments/{establishmentId}/payment-methods/{code}` | `hasAuthority('can_payment_method_delete')` |
+
+### Exemples de migration des contextes
+
+```http
+GET /api/v1/establishments/{establishmentId}/employees
+GET /api/v1/establishments/{establishmentId}/employees/me
+GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees
+POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees/{chargeId}/payments
+GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/payments/{paymentId}/receipt
+GET /api/v1/establishments/{establishmentId}/guardians/me/children/{studentId}/school-years/{academicYearId}/summary
+GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/dashboard?date=2026-10-19
+```
+
+Les paiements conservent le corps `{ "amount": 25.00, "paymentMethodCode": "CASH", "reference": "cash-001" }` et la réponse avec reçu. Une créance ou un reçu d’une autre année est refusé sans écrire de paiement. Un parent doit avoir un lien actif avec l’enfant dans l’établissement explicitement indiqué. L’invitation et la modification des rôles du personnel exigent en plus `can_employee_assign_administrator` lorsque `ESTABLISHMENT_ADMIN` est demandé. Les affectations classe/matière conservent leur corps facultatif `classroomTeachers` (salle et employé actifs du contexte), leur caractère atomique et la validation des doublons.

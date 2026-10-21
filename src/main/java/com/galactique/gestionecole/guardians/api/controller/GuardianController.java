@@ -6,7 +6,6 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -22,6 +21,7 @@ import com.galactique.gestionecole.guardians.api.dto.GuardianLinkResponse;
 import com.galactique.gestionecole.guardians.api.dto.GuardianResponse;
 import com.galactique.gestionecole.guardians.api.dto.LinkGuardianRequest;
 import com.galactique.gestionecole.guardians.application.GuardianApplicationService;
+
 import jakarta.validation.Valid;
 
 @RestController
@@ -71,16 +71,6 @@ public class GuardianController {
 	}
 
 	private EmployeeActor toActor(Authentication authentication) {
-		return new EmployeeActor(authentication.getName(), hasAuthority(authentication, "ADMIN_ACCESS"),
-			hasAuthority(authentication, "ESTABLISHMENT_STAFF_MANAGEMENT"));
-	}
-
-	private boolean hasAuthority(Authentication authentication, String expectedAuthority) {
-		for (GrantedAuthority authority : authentication.getAuthorities()) {
-			if (authority != null && expectedAuthority.equals(authority.getAuthority())) {
-				return true;
-			}
-		}
-		return false;
+		return new EmployeeActor(authentication.getName());
 	}
 }

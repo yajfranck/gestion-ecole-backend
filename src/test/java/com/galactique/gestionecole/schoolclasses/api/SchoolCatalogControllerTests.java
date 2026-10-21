@@ -1,5 +1,7 @@
 package com.galactique.gestionecole.schoolclasses.api;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.nullValue;
@@ -26,7 +28,10 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.schoolclasses.application.CreateSchoolClassCommand;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
 import com.galactique.gestionecole.positions.domain.PositionRepository;
@@ -45,6 +50,7 @@ class SchoolCatalogControllerTests {
 	@Autowired private PositionRepository positions;
 	@Autowired private EmployeeRepository employees;
 	@Autowired private SecurityAccountProvisioner accounts;
+	@Autowired private SchoolCatalogApplicationService catalog;
 
 	@Autowired
 	SchoolCatalogControllerTests(MockMvc mockMvc, EstablishmentRepository establishmentRepository,
@@ -55,18 +61,28 @@ class SchoolCatalogControllerTests {
 	}
 
 	@Test
+	void createsAClassWithoutAnyClassroomAtTheApplicationBoundary() {
+		Establishment school = createEstablishment();
+		var year = years.save(school.id(), "2026-2027", LocalDate.of(2026, 9, 1), LocalDate.of(2027, 6, 30));
+		var schoolClass = catalog.createClass(school.id(), year.id(),
+			new CreateSchoolClassCommand("EMPTY", "No classroom", null), new EmployeeActor("admin-tech"));
+		assertEquals("EMPTY", schoolClass.code());
+		assertTrue(catalog.findClassrooms(school.id(), year.id(), schoolClass.id(), new EmployeeActor("admin-tech")).isEmpty());
+	}
+
+	@Test
 	void configuresClassesSubjectsAndClassSubjectAssignments() throws Exception {
 		Establishment establishment = createEstablishment();
 		String establishmentUrl = "/api/v1/establishments/" + establishment.id();
 		String subjectResponse = mockMvc.perform(post(establishmentUrl + "/subjects")
 			.with(administrator("can_subject_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"MATH\",\"name\":\"Mathematics\"}"))
+			.content("{\"subjects\":[{\"code\":\"MATH\",\"name\":\"Mathematics\"}]}"))
 			.andExpect(status().isCreated())
 			.andReturn()
 			.getResponse()
 			.getContentAsString();
-		String subjectId = JsonPath.read(subjectResponse, "$.id");
+		String subjectId = JsonPath.read(subjectResponse, "$[0].id");
 		mockMvc.perform(get(establishmentUrl + "/subjects/" + subjectId)
 			.with(administrator("can_subject_read")))
 			.andExpect(status().isOk())
@@ -87,11 +103,28 @@ class SchoolCatalogControllerTests {
 			.with(administrator("can_school_class_create"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"P1-A\",\"name\":\"Primary 1 A\"}"))
-			.andExpect(status().isCreated())
-			.andReturn()
-			.getResponse()
-			.getContentAsString();
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
 		String schoolClassId = JsonPath.read(schoolClassResponse, "$.id");
+		mockMvc.perform(get(classesUrl + "/" + schoolClassId + "/classrooms")
+			.with(administrator("can_school_class_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+		mockMvc.perform(put(classesUrl + "/" + schoolClassId + "/subjects/" + subjectId)
+			.with(administrator("can_class_subject_assign"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classroomTeachers\":[{\"classroomId\":\"" + UUID.randomUUID()
+				+ "\",\"employeeId\":\"" + UUID.randomUUID() + "\"}]}"))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Cette opération est impossible : aucune salle de classe n'est associée à cette classe. Veuillez d'abord lui affecter au moins une salle."));
+		mockMvc.perform(post(classesUrl + "/" + schoolClassId + "/classrooms")
+			.with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Primary 1 A\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		mockMvc.perform(get(classesUrl + "/" + schoolClassId + "/classrooms")
+			.with(administrator("can_school_class_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)))
+			.andExpect(jsonPath("$[0].code").value("A"))
+			.andExpect(jsonPath("$[0].maxStudents").value(40));
 		mockMvc.perform(get(classesUrl + "/" + schoolClassId)
 			.with(administrator("can_school_class_read")))
 			.andExpect(status().isOk())
@@ -175,6 +208,40 @@ class SchoolCatalogControllerTests {
 		mockMvc.perform(get(classesUrl).with(administrator("can_school_class_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)))
 			.andExpect(jsonPath("$[0].series").value("Scientifique"));
+	}
+
+	@Test
+	void createsClassesInBulkAtomicallyAndReportsInvalidClassIndex() throws Exception {
+		String classesUrl = classesUrl(createEstablishment());
+		String response = mockMvc.perform(post(classesUrl + "/bulk").with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classes\":[{\"code\":\"BULK-A\",\"name\":\"Sixième A\"},"
+				+ "{\"code\":\"BULK-B\",\"name\":\"Sixième B\"}]}") )
+			.andExpect(status().isCreated()).andExpect(jsonPath("$", hasSize(2)))
+			.andReturn().getResponse().getContentAsString();
+		String classId = JsonPath.read(response, "$[0].id");
+		mockMvc.perform(get(classesUrl + "/" + classId + "/classrooms").with(administrator("can_school_class_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+
+		mockMvc.perform(post(classesUrl + "/bulk").with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classes\":[{\"code\":\"ROLLBACK-A\",\"name\":\"Valid\"},"
+				+ "{\"code\":\"ROLLBACK-A\",\"name\":\"Duplicate\"}]}") )
+			.andExpect(status().isBadRequest()).andExpect(jsonPath("$.detail").value(
+				org.hamcrest.Matchers.containsString("classes[1]")));
+		mockMvc.perform(post(classesUrl + "/bulk").with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classes\":[{\"code\":\"ROLLBACK-B\",\"name\":\"Valid\"},"
+				+ "{\"code\":\"ROLLBACK-C\",\"name\":\"   \"}]}") )
+			.andExpect(status().isBadRequest()).andExpect(jsonPath("$.detail").value(
+				org.hamcrest.Matchers.containsString("classes[1]")));
+		mockMvc.perform(post(classesUrl + "/bulk").with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classes\":[{\"code\":\"BULK-A\",\"name\":\"Already exists\"}]}") )
+			.andExpect(status().isConflict()).andExpect(jsonPath("$.detail").value(
+				org.hamcrest.Matchers.containsString("classes[0]")));
+		mockMvc.perform(get(classesUrl).with(administrator("can_school_class_read")))
+			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(2)));
 	}
 
 	@Test

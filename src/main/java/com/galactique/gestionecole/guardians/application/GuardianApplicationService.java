@@ -158,7 +158,7 @@ public class GuardianApplicationService {
 			.filter(guardian -> guardian.enabled())
 			.filter(guardian -> guardian.userAccountId() != null)
 			.map(guardian -> guardianRepository.findChildren(guardian.id()).stream()
-				.filter(student -> licenseApplicationService.hasFeature(student.establishmentId(),
+				.filter(student -> licenseApplicationService.canAccessFeature(student.establishmentId(),
 					LicenseFeature.PARENT_PORTAL, Instant.now()))
 				.toList())
 			.orElseGet(List::of);

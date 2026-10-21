@@ -2,7 +2,6 @@ package com.galactique.gestionecole.learning.application;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
@@ -11,7 +10,6 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedException;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.learning.domain.LearningAttachment;
@@ -239,7 +237,7 @@ public class LearningContentApplicationService {
 	}
 
 	private void requireFeature(UUID establishmentId) {
-		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.LEARNING_CONTENT,
+		if (!licenseApplicationService.canAccessFeature(establishmentId, LicenseFeature.LEARNING_CONTENT,
 			java.time.Instant.now())) {
 			throw new LearningContentAccessDeniedException();
 		}

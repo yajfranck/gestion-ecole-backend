@@ -19,8 +19,10 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 
-import com.galactique.gestionecole.security.infrastructure.jwt.JwtToken;
+import com.galactique.gestionecole.security.infrastructure.api.controller.AuthenticationController;
+import com.galactique.gestionecole.security.infrastructure.api.dto.LoginRequest;
 import com.galactique.gestionecole.security.infrastructure.jwt.IssuedTokenPair;
+import com.galactique.gestionecole.security.infrastructure.jwt.JwtToken;
 import com.galactique.gestionecole.security.infrastructure.jwt.RefreshTokenService;
 
 @ExtendWith(MockitoExtension.class)

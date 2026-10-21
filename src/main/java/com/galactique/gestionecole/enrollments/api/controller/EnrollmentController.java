@@ -6,24 +6,23 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.galactique.gestionecole.employees.application.EmployeeActor;
+import com.galactique.gestionecole.enrollments.api.dto.ChangeEnrollmentClassroomRequest;
 import com.galactique.gestionecole.enrollments.api.dto.CreateEnrollmentRequest;
 import com.galactique.gestionecole.enrollments.api.dto.EnrollmentCreationResponse;
 import com.galactique.gestionecole.enrollments.api.dto.EnrollmentResponse;
-import com.galactique.gestionecole.enrollments.api.dto.ChangeEnrollmentClassroomRequest;
 import com.galactique.gestionecole.enrollments.application.CreateEnrollmentCommand;
-import com.galactique.gestionecole.enrollments.application.EnrollmentPaymentInput;
 import com.galactique.gestionecole.enrollments.application.EnrollmentApplicationService;
+import com.galactique.gestionecole.enrollments.application.EnrollmentPaymentInput;
 
 import jakarta.validation.Valid;
 
@@ -70,16 +69,6 @@ public class EnrollmentController {
 	}
 
 	private EmployeeActor toActor(Authentication authentication) {
-		return new EmployeeActor(authentication.getName(), hasAuthority(authentication, "ADMIN_ACCESS"),
-			hasAuthority(authentication, "ESTABLISHMENT_STAFF_MANAGEMENT"));
-	}
-
-	private boolean hasAuthority(Authentication authentication, String expectedAuthority) {
-		for (GrantedAuthority authority : authentication.getAuthorities()) {
-			if (authority != null && expectedAuthority.equals(authority.getAuthority())) {
-				return true;
-			}
-		}
-		return false;
+		return new EmployeeActor(authentication.getName());
 	}
 }

@@ -1,44 +1,43 @@
 package com.galactique.gestionecole;
 
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.hamcrest.Matchers.hasSize;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
-import org.springframework.test.context.ActiveProfiles;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
-import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
-import com.galactique.gestionecole.security.domain.UserAccountRepository;
-import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.employees.application.EmployeeInvitationMailer;
 import com.galactique.gestionecole.employees.domain.Employee;
 import com.galactique.gestionecole.employees.domain.EmployeeRepository;
-import com.jayway.jsonpath.JsonPath;
-
-import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.security.domain.UserAccountRepository;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -58,7 +57,7 @@ class GestionEcoleApplicationTests {
 
 	@Autowired
 	private EstablishmentRepository establishmentRepository;
-	
+
 	@Autowired
 	private EmployeeRepository employeeRepository;
 
@@ -128,11 +127,11 @@ class GestionEcoleApplicationTests {
 	}
 
 	@Test
-	@WithMockUser(authorities = "ADMIN_ACCESS")
+	@WithMockUser(username = "admin-tech", authorities = {"can_user_read", "can_platform_role_read", "can_permission_read"})
 	void administratorCanReadUsersRolesAndPermissionsWithoutPasswordHashes() throws Exception {
 		mockMvc.perform(get("/api/v1/user"))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[0].username").value("admin-tech"))
+			.andExpect(jsonPath("$[*].username").value(org.hamcrest.Matchers.hasItem("admin-tech")))
 			.andExpect(jsonPath("$[0].passwordHash").doesNotExist());
 
 		mockMvc.perform(get("/api/v1/role"))
@@ -142,7 +141,7 @@ class GestionEcoleApplicationTests {
 
 		mockMvc.perform(get("/api/v1/permission"))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$[0].code").value("ADMIN_ACCESS"));
+			.andExpect(jsonPath("$[*].code").value(org.hamcrest.Matchers.hasItem("can_employee_update")));
 	}
 
 	@Test
@@ -171,11 +170,11 @@ class GestionEcoleApplicationTests {
 			.getContentAsString();
 		String accessToken = JsonPath.read(loginResponse, "$.accessToken");
 
-		mockMvc.perform(get("/api/v1/employees/me").header("Authorization", "Bearer " + accessToken))
+		mockMvc.perform(get("/api/v1/establishments/" + firstEstablishment.id() + "/employees/me").header("Authorization", "Bearer " + accessToken))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.email").value(administratorEmail));
 
-		mockMvc.perform(get("/api/v1/employees").header("Authorization", "Bearer " + accessToken))
+		mockMvc.perform(get("/api/v1/establishments/" + firstEstablishment.id() + "/employees").header("Authorization", "Bearer " + accessToken))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$", hasSize(2)));
 
@@ -193,7 +192,7 @@ class GestionEcoleApplicationTests {
 	@Test
 	@WithMockUser(authorities = "STAFF_ACCESS")
 	void regularEmployeeCannotBrowseEmployeeOrEstablishments() throws Exception {
-		mockMvc.perform(get("/api/v1/employees"))
+		mockMvc.perform(get("/api/v1/establishments/" + UUID.randomUUID() + "/employees"))
 			.andExpect(status().isForbidden());
 
 		mockMvc.perform(get("/api/v1/establishments"))
@@ -228,7 +227,7 @@ class GestionEcoleApplicationTests {
 		UUID seniorPositionId = createPosition(firstEstablishment.id(), "Senior Teacher", "[]");
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.patch("/api/v1/employees/" + teacher.id())
+			.patch("/api/v1/establishments/" + firstEstablishment.id() + "/employees/" + teacher.id())
 			.header("Authorization", "Bearer " + principalToken)
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"positionId\":\"" + seniorPositionId + "\"}"))
@@ -236,14 +235,14 @@ class GestionEcoleApplicationTests {
 			.andExpect(jsonPath("$.positionName").value("Senior Teacher"));
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.put("/api/v1/employees/" + teacher.id() + "/roles")
+			.put("/api/v1/establishments/" + firstEstablishment.id() + "/employees/" + teacher.id() + "/roles")
 			.header("Authorization", "Bearer " + principalToken)
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"roleCodes\":[\"STAFF\",\"ESTABLISHMENT_ADMIN\"]}"))
-			.andExpect(status().isBadRequest());
+			.andExpect(status().isForbidden());
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.put("/api/v1/employees/" + teacher.id() + "/roles")
+			.put("/api/v1/establishments/" + firstEstablishment.id() + "/employees/" + teacher.id() + "/roles")
 			.header("Authorization", "Bearer " + principalToken)
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"roleCodes\":[\"STAFF\"]}"))
@@ -271,21 +270,21 @@ class GestionEcoleApplicationTests {
 			.andExpect(jsonPath("$", hasSize(1)));
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.patch("/api/v1/employees/" + otherTeacher.id())
+			.patch("/api/v1/establishments/" + firstEstablishment.id() + "/employees/" + otherTeacher.id())
 			.header("Authorization", "Bearer " + principalToken)
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"positionId\":\"" + teacher.positionId() + "\"}"))
 			.andExpect(status().isNotFound());
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-			.delete("/api/v1/employees/" + teacher.id())
+			.delete("/api/v1/establishments/" + firstEstablishment.id() + "/employees/" + teacher.id())
 			.header("Authorization", "Bearer " + principalToken))
 			.andExpect(status().isNoContent());
 		assertFalse(userAccountRepository.findByUsername(teacherEmail).orElseThrow().enabled());
 
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
 			.delete("/api/v1/establishments/" + firstEstablishment.id())
-			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("ADMIN_ACCESS"))))
+			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("can_employee_create"), new SimpleGrantedAuthority("can_establishment_delete"))))
 			.andExpect(status().isNoContent());
 		assertFalse(userAccountRepository.findByUsername(principalEmail).orElseThrow().enabled());
 		assertFalse(employeeRepository.findByEmail(principalEmail).orElseThrow().enabled());
@@ -318,8 +317,8 @@ class GestionEcoleApplicationTests {
 			{"employeeNumber":"%s","firstName":"%s","lastName":"%s","email":"%s","positionId":"%s","directRoleCodes":["STAFF"]}
 			""".formatted(employeeNumber, firstName, lastName, email, positionId);
 
-		mockMvc.perform(post("/api/v1/employees")
-			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("ADMIN_ACCESS")))
+		mockMvc.perform(post("/api/v1/establishments/" + establishmentId + "/employees")
+			.with(user("admin-tech").authorities(new SimpleGrantedAuthority("can_employee_create"), new SimpleGrantedAuthority("can_establishment_delete")))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content(requestBody))
 			.andExpect(status().isCreated());
@@ -330,7 +329,7 @@ class GestionEcoleApplicationTests {
 	private UUID createPosition(UUID establishmentId, String name, String rolesJson) throws Exception {
 		String response = mockMvc.perform(post("/api/v1/establishments/" + establishmentId + "/positions")
 			.with(user("admin-tech").authorities(
-				new SimpleGrantedAuthority("ADMIN_ACCESS"), new SimpleGrantedAuthority("can_position_create")))
+				new SimpleGrantedAuthority("can_employee_create"), new SimpleGrantedAuthority("can_establishment_delete"), new SimpleGrantedAuthority("can_position_create")))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"name\":\"" + name + "\",\"roleCodes\":" + rolesJson + "}"))
 			.andExpect(status().isCreated())

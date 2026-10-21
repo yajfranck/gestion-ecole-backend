@@ -9,11 +9,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.establishments.application.EstablishmentApplicationService;
-import com.galactique.gestionecole.establishments.application.EstablishmentNotFoundException;
 import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedException;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
+import com.galactique.gestionecole.establishments.application.EstablishmentApplicationService;
 import com.galactique.gestionecole.licenses.domain.LicenseEvent;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 import com.galactique.gestionecole.licenses.domain.LicenseOffer;
@@ -137,6 +136,13 @@ public class LicenseApplicationService {
 			"ENDED", "License ended by platform administrator");
 	}
 
+	/** Checks the establishment license identically for every caller. */
+	@Transactional(readOnly = true)
+	public boolean canAccessFeature(UUID establishmentId, LicenseFeature feature, Instant at) {
+		return hasFeature(establishmentId, feature, at);
+	}
+
+	/** Reports the features actually granted by an establishment's active license. */
 	@Transactional(readOnly = true)
 	public boolean hasFeature(UUID establishmentId, LicenseFeature feature, Instant at) {
 		return licenseRepository.findLicenses(establishmentId).stream()

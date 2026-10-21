@@ -59,7 +59,7 @@ public class JpaEnrollmentFeeChargeGateway implements EnrollmentFeeChargeGateway
 			if (!payments.isEmpty()) { throw new EnrollmentNotFoundException(); }
 			return List.of();
 		}
-		if (!licenseApplicationService.hasFeature(enrollment.establishmentId(), LicenseFeature.TUITION,
+		if (!licenseApplicationService.canAccessFeature(enrollment.establishmentId(), LicenseFeature.TUITION,
 			java.time.Instant.now())) {
 			throw new EnrollmentAccessDeniedException();
 		}

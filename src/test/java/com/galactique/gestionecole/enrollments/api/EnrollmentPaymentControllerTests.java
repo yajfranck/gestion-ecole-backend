@@ -1,7 +1,7 @@
 package com.galactique.gestionecole.enrollments.api;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -23,10 +24,12 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
+import com.galactique.gestionecole.schoolclasses.application.CreateClassroomCommand;
 import com.galactique.gestionecole.schoolclasses.application.CreateSchoolClassCommand;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
@@ -36,13 +39,12 @@ import com.galactique.gestionecole.tuition.application.CreateTuitionFeeCommand;
 import com.galactique.gestionecole.tuition.application.TuitionApplicationService;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeDraft;
 import com.galactique.gestionecole.tuition.domain.TuitionRepository;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("local")
 class EnrollmentPaymentControllerTests {
-	private static final EmployeeActor ACTOR = new EmployeeActor("admin-tech", true, false);
+	private static final EmployeeActor ACTOR = new EmployeeActor("admin-tech");
 	@Autowired MockMvc mvc;
 	@Autowired JdbcTemplate jdbc;
 	@Autowired EstablishmentRepository schools;
@@ -76,7 +78,7 @@ class EnrollmentPaymentControllerTests {
 			.andExpect(jsonPath("$.payments[2].currency").value("EUR"))
 			.andReturn().getResponse().getContentAsString();
 		String paymentId = JsonPath.read(response, "$.payments[0].id");
-		mvc.perform(get(fixture.base() + "/payments/" + paymentId + "/receipt").with(admin("can_payment_receipt_read")))
+		mvc.perform(get(fixture.base() + "/school-years/" + fixture.yearId() + "/payments/" + paymentId + "/receipt").with(admin("can_payment_receipt_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.receiptNumber").isNotEmpty())
 			.andExpect(jsonPath("$.balanceAfterPayment").value(0));
 		mvc.perform(post(fixture.url()).with(admin("can_enrollment_create", "can_payment_record"))
@@ -104,11 +106,11 @@ class EnrollmentPaymentControllerTests {
 		mvc.perform(get(fixture.url()).with(admin("can_enrollment_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$[0].advanceAccepted").value(true))
 			.andExpect(jsonPath("$[0].paymentDecisionBy").value("admin-tech"));
-		mvc.perform(post(fixture.base() + "/students/" + fixture.studentId() + "/tuition-fees/" + chargeId + "/payments")
+		mvc.perform(post(fixture.base() + "/school-years/" + fixture.yearId() + "/students/" + fixture.studentId() + "/tuition-fees/" + chargeId + "/payments")
 			.with(admin("can_payment_record")).contentType(MediaType.APPLICATION_JSON)
 			.content("{\"amount\":75,\"paymentMethodCode\":\"CASH\"}"))
 			.andExpect(status().isCreated());
-		var room = catalog.createClassroom(fixture.schoolId(), fixture.yearId(), fixture.classId(), "B", "Room B", ACTOR);
+		var room = catalog.createClassroom(fixture.schoolId(), fixture.yearId(), fixture.classId(), "B", "Room B", 40, ACTOR);
 		mvc.perform(patch(fixture.url() + "/" + enrollmentId).with(admin("can_enrollment_update"))
 			.contentType(MediaType.APPLICATION_JSON).content("{\"classroomId\":\"" + room.id() + "\"}"))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.advanceAccepted").value(true))
@@ -183,7 +185,9 @@ class EnrollmentPaymentControllerTests {
 		mvc.perform(post(fixture.url()).with(admin("can_enrollment_create", "can_payment_record"))
 			.contentType(MediaType.APPLICATION_JSON).content(request(fixture, false, payment(validFee, "100", "CASH"))))
 			.andExpect(status().isForbidden());
-		assertNothingSaved(fixture);
+		assertEquals(0, count("enrollments", fixture.studentId()));
+		assertEquals(0, count("student_fee_charges", fixture.studentId()));
+		assertEquals(0, count("tuition_payments", fixture.studentId()));
 	}
 
 	@Test
@@ -193,7 +197,7 @@ class EnrollmentPaymentControllerTests {
 		var definition = fees.findFee(fee, fixture.schoolId(), fixture.yearId()).orElseThrow();
 		var student = students.findByIdAndEstablishmentId(fixture.studentId(), fixture.schoolId()).orElseThrow();
 		var charge = fees.saveCharge(definition, student);
-		tuition.recordPayment(fixture.schoolId(), student.id(), charge.id(), new BigDecimal("100"), "CASH", null, ACTOR);
+		tuition.recordPayment(fixture.schoolId(), fixture.yearId(), student.id(), charge.id(), new BigDecimal("100"), "CASH", null, ACTOR);
 		mvc.perform(post(fixture.url()).with(admin("can_enrollment_create"))
 			.contentType(MediaType.APPLICATION_JSON).content(request(fixture, false)))
 			.andExpect(status().isCreated()).andExpect(jsonPath("$.payments", hasSize(0)));
@@ -205,7 +209,9 @@ class EnrollmentPaymentControllerTests {
 		var school = LicensedEstablishmentFixture.create(schools, licenses,
 			"EPM-" + UUID.randomUUID().toString().substring(0, 8), "Enrollment Payment School");
 		var year = years.save(school.id(), "2026-2027", LocalDate.of(2026, 9, 1), LocalDate.of(2027, 6, 30));
-		var schoolClass = catalog.createClass(school.id(), year.id(), new CreateSchoolClassCommand("6", "Sixième", null), ACTOR);
+		var schoolClass = catalog.createClass(school.id(), year.id(),
+			new CreateSchoolClassCommand("6", "Sixième", null), ACTOR);
+		catalog.createClassroom(school.id(), year.id(), schoolClass.id(), "A", "Sixième A", 40, ACTOR);
 		var student = students.save(school.id(), "New", "Student");
 		tuition.replacePaymentMethods(school.id(), List.of(new TuitionApplicationService.PaymentMethodInput("CASH", "Cash desk")), ACTOR);
 		tuition.createFeeType(school.id(), "TUITION", "Tuition", ACTOR);

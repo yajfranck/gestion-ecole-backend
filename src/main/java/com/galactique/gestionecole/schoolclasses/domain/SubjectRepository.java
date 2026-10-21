@@ -6,6 +6,7 @@ import java.util.UUID;
 
 public interface SubjectRepository {
 	Subject save(UUID establishmentId, String code, String name);
+	default Subject save(UUID establishmentId, String name) { return save(establishmentId, null, name); }
 
 	boolean existsByEstablishmentIdAndCode(UUID establishmentId, String code);
 

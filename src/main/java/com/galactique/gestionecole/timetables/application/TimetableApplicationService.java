@@ -14,17 +14,18 @@ import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
+
 import com.galactique.gestionecole.employees.domain.EmployeeRepository;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
-import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
 import com.galactique.gestionecole.schoolclasses.domain.ClassSubjectRepository;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassRepository;
+import com.galactique.gestionecole.schoolclasses.application.SchoolClassOperationalityService;
 import com.galactique.gestionecole.schoolclasses.domain.SubjectRepository;
-import com.galactique.gestionecole.security.domain.Role;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 import com.galactique.gestionecole.timetables.domain.NonWorkingDay;
 import com.galactique.gestionecole.timetables.domain.TimetableEntry;
@@ -44,19 +45,22 @@ public class TimetableApplicationService {
 	private final SubjectRepository subjects;
 	private final ClassSubjectRepository assignments;
 	private final LicenseApplicationService licenses;
+	private final SchoolClassOperationalityService schoolClassOperationalityService;
 
 	public TimetableApplicationService(TimetableRepository repository, UserAccountRepository accounts,
 		EmployeeRepository employees, EstablishmentRepository schools, AcademicYearRepository years,
 		SchoolClassRepository classes, ClassroomRepository classrooms, SubjectRepository subjects,
-		ClassSubjectRepository assignments, LicenseApplicationService licenses) {
+		ClassSubjectRepository assignments, LicenseApplicationService licenses,
+		SchoolClassOperationalityService schoolClassOperationalityService) {
 		this.repository = repository; this.accounts = accounts; this.employees = employees; this.schools = schools;
 		this.years = years; this.classes = classes; this.classrooms = classrooms; this.subjects = subjects;
 		this.assignments = assignments; this.licenses = licenses;
+		this.schoolClassOperationalityService = schoolClassOperationalityService;
 	}
 
 	@Transactional(readOnly = true)
 	public List<TimetableEntry> list(UUID school, UUID year, UUID schoolClass, UUID classroom, DayOfWeek day, String actor) {
-		requireScope(school, actor, "can_timetable_read", false);
+		requireScope(school, actor, false);
 		context(school, year, schoolClass, classroom, false);
 		return entries(school, classroom).stream().filter(entry -> day == null || entry.dayOfWeek() == day).toList();
 	}
@@ -70,7 +74,7 @@ public class TimetableApplicationService {
 	@Transactional
 	public TimetableEntry save(UUID school, UUID year, UUID schoolClass, UUID classroom, UUID entryId,
 		TimetableEntryCommand command, String actor) {
-		requireScope(school, actor, entryId == null ? "can_timetable_create" : "can_timetable_update", true);
+		requireScope(school, actor, true);
 		AcademicYear academicYear = context(school, year, schoolClass, classroom, true);
 		var all = repository.findActiveByEstablishment(school);
 		TimetableEntry current = entryId == null ? null : find(all, classroom, entryId);
@@ -81,7 +85,7 @@ public class TimetableApplicationService {
 
 	@Transactional
 	public void archive(UUID school, UUID year, UUID schoolClass, UUID classroom, UUID entryId, String actor) {
-		requireScope(school, actor, "can_timetable_delete", true);
+		requireScope(school, actor, true);
 		context(school, year, schoolClass, classroom, true);
 		repository.archive(find(repository.findActiveByEstablishment(school), classroom, entryId), actor);
 	}
@@ -89,8 +93,7 @@ public class TimetableApplicationService {
 	@Transactional
 	public List<TimetableEntry> copy(UUID school, UUID year, UUID schoolClass, UUID sourceRoom,
 		CopyTimetableCommand command, String actor) {
-		requireScope(school, actor, "can_timetable_copy", true);
-		if (command.replaceExisting()) { requireScope(school, actor, "can_timetable_delete", false); }
+		requireScope(school, actor, true);
 		context(school, year, schoolClass, sourceRoom, false);
 		if (sourceRoom.equals(command.targetClassroomId())) {
 			throw new TimetableValidationException("Source and target classrooms must be different");
@@ -129,7 +132,7 @@ public class TimetableApplicationService {
 
 	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public DaySchedule day(UUID school, UUID year, UUID schoolClass, UUID classroom, LocalDate date, String actor) {
-		requireScope(school, actor, "can_timetable_read", false);
+		requireScope(school, actor, false);
 		AcademicYear academicYear = context(school, year, schoolClass, classroom, false);
 		validateDate(date, academicYear);
 		return buildDay(date, academicYear, entries(school, classroom), repository.findNonWorkingDays(school, year));
@@ -137,7 +140,7 @@ public class TimetableApplicationService {
 
 	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
 	public WeekSchedule week(UUID school, UUID year, UUID schoolClass, UUID classroom, LocalDate date, String actor) {
-		requireScope(school, actor, "can_timetable_read", false);
+		requireScope(school, actor, false);
 		AcademicYear academicYear = context(school, year, schoolClass, classroom, false);
 		validateDate(date, academicYear);
 		LocalDate start = date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
@@ -149,14 +152,14 @@ public class TimetableApplicationService {
 
 	@Transactional(readOnly = true)
 	public List<NonWorkingDay> nonWorkingDays(UUID school, UUID year, String actor) {
-		requireScope(school, actor, "can_timetable_read", false);
+		requireScope(school, actor, false);
 		year(school, year);
 		return repository.findNonWorkingDays(school, year);
 	}
 
 	@Transactional
 	public List<NonWorkingDay> replaceNonWorkingDays(UUID school, UUID year, List<NonWorkingDay> days, String actor) {
-		requireScope(school, actor, "can_timetable_update", true);
+		requireScope(school, actor, true);
 		AcademicYear academicYear = year(school, year);
 		HashSet<LocalDate> seen = new HashSet<>();
 		for (NonWorkingDay day : days) {
@@ -199,22 +202,25 @@ public class TimetableApplicationService {
 			current == null ? now : current.createdAt(), now);
 	}
 
-	private void requireScope(UUID school, String actor, String permission, boolean lock) {
+	private void requireScope(UUID school, String actor, boolean lock) {
 		var account = accounts.findByUsername(actor).filter(a -> a.enabled() && !a.locked()).orElseThrow(TimetableAccessDeniedException::new);
-		if (account.roles().stream().filter(Role::enabled).flatMap(r -> r.permissions().stream())
-			.noneMatch(p -> p.code().equals(permission))) { throw new TimetableAccessDeniedException(); }
-		var employee = employees.findByEmail(actor).filter(e -> e.enabled() && account.id().equals(e.userAccountId()))
+		var employee = employees.findByUserAccountIdAndEstablishmentId(account.id(), school).filter(e -> e.enabled() && account.id().equals(e.userAccountId()))
 			.orElseThrow(TimetableAccessDeniedException::new);
 		if (!employee.establishmentId().equals(school)) { throw new TimetableNotFoundException(); }
 		var establishment = (lock ? schools.findByIdForUpdate(school) : schools.findById(school))
 			.filter(s -> s.enabled()).orElseThrow(TimetableNotFoundException::new);
-		if (!licenses.hasFeature(establishment.id(), LicenseFeature.SCHOOL_MANAGEMENT, Instant.now())) {
+		if (!licenses.canAccessFeature(establishment.id(), LicenseFeature.SCHOOL_MANAGEMENT, Instant.now())) {
 			throw new TimetableAccessDeniedException();
 		}
 	}
 
 	private AcademicYear context(UUID school, UUID year, UUID schoolClass, UUID classroom, boolean lock) {
 		AcademicYear academicYear = year(school, year);
+		try {
+			schoolClassOperationalityService.requireActiveClassroom(school, year, schoolClass);
+		} catch (com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException exception) {
+			throw new TimetableNotFoundException();
+		}
 		(lock ? classes.findForUpdate(schoolClass, school, year)
 			: classes.findByIdAndEstablishmentIdAndAcademicYearId(schoolClass, school, year))
 			.orElseThrow(TimetableNotFoundException::new);

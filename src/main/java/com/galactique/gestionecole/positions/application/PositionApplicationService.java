@@ -9,22 +9,24 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
-import com.galactique.gestionecole.security.domain.SecurityDirectoryRepository;
-import com.galactique.gestionecole.security.domain.Role;
-import com.galactique.gestionecole.employees.application.InvalidEmployeeRolesException;
-import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedException;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeConflictException;
 import com.galactique.gestionecole.employees.application.EmployeeNotFoundException;
-import com.galactique.gestionecole.positions.domain.Position;
-import com.galactique.gestionecole.positions.domain.PositionRepository;
+import com.galactique.gestionecole.employees.application.InvalidEmployeeRolesException;
 import com.galactique.gestionecole.employees.domain.Employee;
 import com.galactique.gestionecole.employees.domain.EmployeeRepository;
+import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.positions.domain.Position;
+import com.galactique.gestionecole.positions.domain.PositionRepository;
+import com.galactique.gestionecole.security.application.CallerScopeService;
+import com.galactique.gestionecole.security.domain.PermissionCatalog;
+import com.galactique.gestionecole.security.domain.Role;
+import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
+import com.galactique.gestionecole.security.domain.SecurityDirectoryRepository;
 
 @Service
 public class PositionApplicationService {
+	private final CallerScopeService callerScope;
 	private static final Set<String> RESERVED_ROLE_CODES = Set.of("ADMIN", "PARENT");
 
 	private final PositionRepository positionRepository;
@@ -38,7 +40,8 @@ public class PositionApplicationService {
 		EstablishmentRepository establishmentRepository,
 		EmployeeRepository employeeRepository,
 		SecurityAccountProvisioner securityAccountProvisioner,
-		SecurityDirectoryRepository securityDirectoryRepository) {
+		SecurityDirectoryRepository securityDirectoryRepository, CallerScopeService callerScope) {
+		this.callerScope = callerScope;
 		this.positionRepository = positionRepository;
 		this.establishmentRepository = establishmentRepository;
 		this.employeeRepository = employeeRepository;
@@ -123,17 +126,8 @@ public class PositionApplicationService {
 	}
 
 	private void requireScope(UUID establishmentId, EmployeeActor actor) {
-		if (actor.globalAdministrator()) {
-			return;
-		}
-		employeeRepository.findByEmail(actor.username())
-			.filter(Employee::enabled)
-			.filter(Employee::establishmentAdmin)
-			.filter(member -> member.userAccountId() != null)
-			.filter(member -> member.establishmentId().equals(establishmentId))
-			.orElseThrow(EmployeeAccessDeniedException::new);
+		callerScope.requireEstablishment(actor.username(), establishmentId);
 	}
-
 	private Set<String> validateRoleCodes(UUID establishmentId, Set<String> requestedRoleCodes) {
 		Set<String> roleCodes = requestedRoleCodes.stream()
 			.map(roleCode -> roleCode.strip().toUpperCase(java.util.Locale.ROOT))
@@ -144,13 +138,13 @@ public class PositionApplicationService {
 			.map(Role::code)
 			.filter(roleCode -> !RESERVED_ROLE_CODES.contains(roleCode))
 			.collect(java.util.stream.Collectors.toSet());
-		Set<String> globalAdministratorRoleCodes = establishmentRoles.stream()
-			.filter(role -> role.permissions().stream()
-				.anyMatch(permission -> "ADMIN_ACCESS".equals(permission.code())))
+		Set<String> platformRoleCodes = establishmentRoles.stream()
+			.filter(role -> callerScope.isPlatformRole(role.code()) || role.permissions().stream()
+				.anyMatch(permission -> PermissionCatalog.isPlatformOnly(permission.code())))
 			.map(Role::code)
 			.collect(java.util.stream.Collectors.toSet());
 		if (!availableRoleCodes.containsAll(roleCodes)
-			|| !java.util.Collections.disjoint(roleCodes, globalAdministratorRoleCodes)) {
+			|| !java.util.Collections.disjoint(roleCodes, platformRoleCodes)) {
 			throw new InvalidEmployeeRolesException();
 		}
 		return roleCodes;

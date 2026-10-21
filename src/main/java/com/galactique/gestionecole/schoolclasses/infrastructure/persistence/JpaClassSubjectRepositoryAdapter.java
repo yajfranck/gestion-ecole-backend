@@ -29,7 +29,7 @@ public class JpaClassSubjectRepositoryAdapter implements ClassSubjectRepository 
 	@Override
 	@Transactional
 	public SchoolClassSubject save(UUID establishmentId, UUID schoolClassId, UUID subjectId) {
-		return jpaRepository.save(new SchoolClassSubjectEntity(establishmentId, schoolClassId, subjectId)).toDomain();
+		return jpaRepository.saveAndFlush(new SchoolClassSubjectEntity(establishmentId, schoolClassId, subjectId)).toDomain();
 	}
 
 	@Override

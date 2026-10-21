@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.Set;
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,7 +20,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -97,6 +97,6 @@ class PasswordControllerTests {
 
 	private static org.springframework.test.web.servlet.request.RequestPostProcessor authenticatedUser(String username) {
 		return user(username).authorities(new SimpleGrantedAuthority("ROLE_STAFF"),
-			new SimpleGrantedAuthority("STAFF_ACCESS"));
+			new SimpleGrantedAuthority("can_user_change_password"));
 	}
 }

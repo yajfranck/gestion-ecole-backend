@@ -41,7 +41,7 @@ public class JdbcSchoolYearRolloverRepository implements SchoolYearRolloverRepos
 			""", new MapSqlParameterSource("school", school).addValue("year", year), (rs, row) -> {
 				UUID classId = rs.getObject("school_class_id", UUID.class);
 				return new SourceClassroom(new Classroom(rs.getObject("id", UUID.class), school, year, classId,
-					rs.getString("code"), rs.getString("name"), rs.getBoolean("enabled"),
+					rs.getString("code"), rs.getString("name"), rs.getInt("max_students"), rs.getBoolean("enabled"),
 					rs.getObject("created_at", OffsetDateTime.class).toInstant(), rs.getObject("updated_at", OffsetDateTime.class).toInstant()),
 					new SchoolClass(classId, school, year, rs.getString("class_code"), rs.getString("class_name"), rs.getString("class_series"),
 						rs.getBoolean("class_enabled"), rs.getObject("class_created", OffsetDateTime.class).toInstant(), rs.getObject("class_updated", OffsetDateTime.class).toInstant()));

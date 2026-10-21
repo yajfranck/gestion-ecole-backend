@@ -27,9 +27,6 @@ public record Role(String code, String name, String description, boolean enabled
 			throw new IllegalArgumentException("Role description must not exceed 255 characters");
 		}
 		Objects.requireNonNull(permissions, "permissions must not be null");
-		if (permissions.isEmpty()) {
-			throw new IllegalArgumentException("A role must have at least one permission");
-		}
 
 		Set<String> permissionCodes = new HashSet<>();
 		for (Permission permission : permissions) {

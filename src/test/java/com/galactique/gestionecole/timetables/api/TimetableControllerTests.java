@@ -16,6 +16,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,25 +28,27 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.RequestPostProcessor;
+
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.domain.EmployeeRepository;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.positions.domain.PositionRepository;
+import com.galactique.gestionecole.schoolclasses.application.CreateClassroomCommand;
 import com.galactique.gestionecole.schoolclasses.application.CreateSchoolClassCommand;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
 import com.galactique.gestionecole.schoolclasses.domain.ClassSubjectRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SubjectRepository;
 import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
+import com.galactique.gestionecole.security.infrastructure.jwt.JwtTokenService;
 import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("local")
 class TimetableControllerTests {
-	private static final EmployeeActor GLOBAL = new EmployeeActor("admin-tech", true, false);
+	private static final EmployeeActor GLOBAL = new EmployeeActor("admin-tech");
 	@Autowired MockMvc mvc;
 	@Autowired JdbcTemplate jdbc;
 	@Autowired EstablishmentRepository schools;
@@ -104,7 +107,9 @@ class TimetableControllerTests {
 		create(f, f.roomB(), payload(f.subject(), f.teacherA(), "TUESDAY", "08:00", "09:00",
 			"\"validFrom\":\"2027-01-01\",\"validUntil\":\"2027-06-30\""));
 		var year = years.save(f.school(), "Overlapping year", LocalDate.of(2026, 9, 1), LocalDate.of(2027, 6, 30));
-		var otherClass = catalog.createClass(f.school(), year.id(), new CreateSchoolClassCommand("Y2", "Other year", null), GLOBAL);
+		var otherClass = catalog.createClass(f.school(), year.id(),
+			new CreateSchoolClassCommand("Y2", "Other year", null), GLOBAL);
+		catalog.createClassroom(f.school(), year.id(), otherClass.id(), "A", "Other year A", 40, GLOBAL);
 		assignments.save(f.school(), otherClass.id(), f.subject());
 		var room = catalog.findClassrooms(f.school(), year.id(), otherClass.id(), GLOBAL).getFirst();
 		String otherUrl = "/api/v1/establishments/" + f.school() + "/school-years/" + year.id() + "/classes/" + otherClass.id()
@@ -156,7 +161,9 @@ class TimetableControllerTests {
 		var extraSubject = subjects.save(f.school(), "EXTRA", "Extra");
 		assignments.save(f.school(), f.schoolClass(), extraSubject.id());
 		create(f, f.roomA(), payload(extraSubject.id(), null, "TUESDAY", "08:00", "09:00", ""));
-		var targetClass = catalog.createClass(f.school(), f.year(), new CreateSchoolClassCommand("T", "Target", null), GLOBAL);
+		var targetClass = catalog.createClass(f.school(), f.year(),
+			new CreateSchoolClassCommand("T", "Target", null), GLOBAL);
+		catalog.createClassroom(f.school(), f.year(), targetClass.id(), "A", "Target A", 40, GLOBAL);
 		assignments.save(f.school(), targetClass.id(), f.subject());
 		var targetRoom = catalog.findClassrooms(f.school(), f.year(), targetClass.id(), GLOBAL).getFirst();
 		String targetUrl = f.yearUrl() + "/classes/" + targetClass.id() + "/classrooms/" + targetRoom.id() + "/timetable";
@@ -214,6 +221,15 @@ class TimetableControllerTests {
 	void validatesTimesDatesAndAssignmentsAndRejectsCrossTenantOrRevokedAccess() throws Exception {
 		var f = fixture();
 		var foreign = fixture();
+		var emptyClass = catalog.createClass(f.school(), f.year(),
+			new CreateSchoolClassCommand("EMPTY", "No classroom", null), GLOBAL);
+		String emptyClassTimetable = f.yearUrl() + "/classes/" + emptyClass.id() + "/classrooms/"
+			+ UUID.randomUUID() + "/timetable";
+		mvc.perform(post(emptyClassTimetable).with(f.as("can_timetable_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(payload(f.subject(), null, "MONDAY", "08:00", "09:00", "")))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Cette opération est impossible : aucune salle de classe n'est associée à cette classe. Veuillez d'abord lui affecter au moins une salle."));
 		for (String invalid : List.of(payload(f.subject(), null, "MONDAY", "09:00", "09:00", ""),
 			payload(f.subject(), null, "MONDAY", "10:00", "09:00", ""),
 			payload(f.subject(), null, "MONDAY", "08:00:30", "09:00", ""),
@@ -227,7 +243,7 @@ class TimetableControllerTests {
 			mvc.perform(post(f.url(f.roomA())).with(f.as("can_timetable_create")).contentType(MediaType.APPLICATION_JSON).content(invalid))
 				.andExpect(status().isNotFound());
 		}
-		mvc.perform(get(foreign.url(foreign.roomA())).with(f.as("can_timetable_read"))).andExpect(status().isNotFound());
+		mvc.perform(get(foreign.url(foreign.roomA())).with(f.as("can_timetable_read"))).andExpect(status().isForbidden());
 		mvc.perform(post(f.url(f.roomA()) + "/copy").with(f.as("can_timetable_copy"))
 			.contentType(MediaType.APPLICATION_JSON).content("{\"targetClassroomId\":\"" + foreign.roomA() + "\"}"))
 			.andExpect(status().isNotFound());
@@ -244,7 +260,7 @@ class TimetableControllerTests {
 		assertThrows(DataIntegrityViolationException.class, () -> jdbc.update("UPDATE timetable_entries SET copied_from_id=? WHERE id=?",
 			UUID.fromString(foreignEntry), UUID.fromString(id)));
 		accounts.updateEmployeeRoles(f.account(), Set.of("STAFF"));
-		mvc.perform(get(f.url(f.roomA())).with(f.as("can_timetable_read"))).andExpect(status().isForbidden());
+		mvc.perform(get(f.url(f.roomA())).with(currentToken(f.email()))).andExpect(status().isForbidden());
 		jdbc.update("UPDATE platform_licenses SET suspended_at=CURRENT_TIMESTAMP WHERE establishment_id=?", foreign.school());
 		mvc.perform(get(foreign.url(foreign.roomA())).with(foreign.as("can_timetable_read"))).andExpect(status().isForbidden());
 	}
@@ -273,9 +289,11 @@ class TimetableControllerTests {
 	private Fixture fixture() {
 		var school = LicensedEstablishmentFixture.create(schools, licenses, "TT-" + UUID.randomUUID().toString().substring(0, 8), "Timetable School");
 		var year = years.save(school.id(), "2026-2027", LocalDate.of(2026, 9, 1), LocalDate.of(2027, 6, 30));
-		var schoolClass = catalog.createClass(school.id(), year.id(), new CreateSchoolClassCommand("6", "Sixième", null), GLOBAL);
+		var schoolClass = catalog.createClass(school.id(), year.id(),
+			new CreateSchoolClassCommand("6", "Sixième", null), GLOBAL);
+		catalog.createClassroom(school.id(), year.id(), schoolClass.id(), "A", "Sixième A", 40, GLOBAL);
 		UUID roomA = catalog.findClassrooms(school.id(), year.id(), schoolClass.id(), GLOBAL).getFirst().id();
-		UUID roomB = catalog.createClassroom(school.id(), year.id(), schoolClass.id(), "B", "Sixième B", GLOBAL).id();
+		UUID roomB = catalog.createClassroom(school.id(), year.id(), schoolClass.id(), "B", "Sixième B", 40, GLOBAL).id();
 		var subject = subjects.save(school.id(), "MATH", "Mathematics");
 		assignments.save(school.id(), schoolClass.id(), subject.id());
 		var adminPosition = positions.save(school.id(), "Administrator", Set.of("ESTABLISHMENT_ADMIN"));
@@ -301,6 +319,12 @@ class TimetableControllerTests {
 	private int activeCount(UUID room) {
 		return jdbc.queryForObject("SELECT COUNT(*) FROM timetable_entries WHERE classroom_id=? AND enabled=TRUE", Integer.class, room);
 	}
+	@Autowired JwtTokenService tokens;
+	private RequestPostProcessor currentToken(String username) {
+		String token = tokens.issue(org.springframework.security.authentication.UsernamePasswordAuthenticationToken.authenticated(username, null, List.of())).value();
+		return request -> { request.addHeader("Authorization", "Bearer " + token); return request; };
+	}
+
 	private record Fixture(UUID school, UUID year, UUID schoolClass, UUID roomA, UUID roomB, UUID subject,
 		UUID teacherA, UUID teacherB, String email, UUID account) {
 		String yearUrl() { return "/api/v1/establishments/" + school + "/school-years/" + year; }

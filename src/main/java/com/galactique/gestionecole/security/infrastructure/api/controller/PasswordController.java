@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.galactique.gestionecole.security.application.PasswordChangeApplicationService;
 import com.galactique.gestionecole.security.infrastructure.api.dto.ChangePasswordRequest;
+
 import jakarta.validation.Valid;
 
 @RestController
@@ -21,7 +22,7 @@ public class PasswordController {
 	}
 
 	@PutMapping("/api/v1/user/me/password")
-	@PreAuthorize("isAuthenticated()")
+	@PreAuthorize("hasAuthority('can_user_change_password')")
 	@ResponseStatus(HttpStatus.NO_CONTENT)
 	public void changePassword(@Valid @RequestBody ChangePasswordRequest request, Authentication authentication) {
 		passwordChangeApplicationService.changePassword(

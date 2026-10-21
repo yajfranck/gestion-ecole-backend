@@ -8,25 +8,22 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedException;
-import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
-import com.galactique.gestionecole.employees.application.EmployeeNotFoundException;
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
+import com.galactique.gestionecole.security.application.CallerScopeService;
 
 @Service
 public class EstablishmentApplicationService {
+	private final CallerScopeService callerScope;
 	private final EstablishmentRepository establishmentRepository;
 	private final EstablishmentEmployeeDeactivation employeeDeactivation;
-	private final EmployeeApplicationService employeeApplicationService;
 
 	public EstablishmentApplicationService(
 		EstablishmentRepository establishmentRepository,
-		EstablishmentEmployeeDeactivation employeeDeactivation,
-		EmployeeApplicationService employeeApplicationService) {
+		EstablishmentEmployeeDeactivation employeeDeactivation, CallerScopeService callerScope) {
+		this.callerScope = callerScope;
 		this.establishmentRepository = establishmentRepository;
 		this.employeeDeactivation = employeeDeactivation;
-		this.employeeApplicationService = employeeApplicationService;
 	}
 
 	@Transactional
@@ -47,21 +44,11 @@ public class EstablishmentApplicationService {
 
 	@Transactional
 	public Establishment update(UUID establishmentId, UpdateEstablishmentCommand command,
-		String username, boolean globalAdministrator) {
+		String username) {
 		Establishment current = establishmentRepository.findById(establishmentId)
 			.filter(Establishment::enabled)
 			.orElseThrow(EstablishmentNotFoundException::new);
-		if (!globalAdministrator) {
-			try {
-				var employee = employeeApplicationService.findCurrent(username);
-				if (employee.userAccountId() == null || !employee.establishmentAdmin()
-					|| !establishmentId.equals(employee.establishmentId())) {
-					throw new EmployeeAccessDeniedException();
-				}
-			} catch (EmployeeNotFoundException exception) {
-				throw new EmployeeAccessDeniedException();
-			}
-		}
+		callerScope.requireEstablishment(username, establishmentId);
 
 		Establishment updated = new Establishment(current.id(),
 			command.code() == null ? current.code() : command.code(),

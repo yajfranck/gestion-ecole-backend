@@ -21,12 +21,15 @@ import com.galactique.gestionecole.enrollments.application.EnrollmentAccessDenie
 import com.galactique.gestionecole.enrollments.application.EnrollmentApplicationService;
 import com.galactique.gestionecole.enrollments.application.EnrollmentNotFoundException;
 import com.galactique.gestionecole.enrollments.domain.Enrollment;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
+import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarAccessDeniedException;
 import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarNotFoundException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarApplicationService;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogAccessDeniedException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
+import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
 import com.galactique.gestionecole.students.application.StudentAccessDeniedException;
 import com.galactique.gestionecole.students.application.StudentApplicationService;
@@ -34,15 +37,12 @@ import com.galactique.gestionecole.students.application.StudentNotFoundException
 import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.tuition.domain.StudentFeeCharge;
 import com.galactique.gestionecole.tuition.domain.TuitionFee;
-import com.galactique.gestionecole.tuition.domain.TuitionPayment;
-import com.galactique.gestionecole.tuition.domain.TuitionPaymentMethod;
-import com.galactique.gestionecole.tuition.domain.TuitionRepository;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeDraft;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeType;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeTypeDraft;
-import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
-import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
-import com.galactique.gestionecole.licenses.domain.LicenseFeature;
+import com.galactique.gestionecole.tuition.domain.TuitionPayment;
+import com.galactique.gestionecole.tuition.domain.TuitionPaymentMethod;
+import com.galactique.gestionecole.tuition.domain.TuitionRepository;
 
 @Service
 public class TuitionApplicationService {
@@ -138,9 +138,10 @@ public class TuitionApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<ChargeBalance> findStudentCharges(UUID establishmentId, UUID studentId, EmployeeActor actor) {
+	public List<ChargeBalance> findStudentCharges(UUID establishmentId, UUID academicYearId, UUID studentId, EmployeeActor actor) {
+		validateYear(establishmentId, academicYearId, actor);
 		validateStudent(establishmentId, studentId, actor);
-		return tuitionRepository.findChargesForStudent(establishmentId, studentId).stream()
+		return tuitionRepository.findChargesForStudentAndYear(establishmentId, studentId, academicYearId).stream()
 			.map(this::toBalance).toList();
 	}
 
@@ -182,20 +183,22 @@ public class TuitionApplicationService {
 	}
 
 	@Transactional
-	public PaymentResult recordPayment(UUID establishmentId, UUID studentId, UUID chargeId,
+	public PaymentResult recordPayment(UUID establishmentId, UUID academicYearId, UUID studentId, UUID chargeId,
 		BigDecimal amount, String paymentMethodCode, String reference, EmployeeActor actor) {
+		validateYear(establishmentId, academicYearId, actor);
 		validateStudent(establishmentId, studentId, actor);
+		tuitionRepository.findCharge(chargeId, establishmentId, studentId, academicYearId).orElseThrow(TuitionNotFoundException::new);
 		var result = paymentRecorder.record(establishmentId, studentId, chargeId, amount,
 			paymentMethodCode, reference, actor.username());
 		return new PaymentResult(result.payment(), result.charge(), result.totalPaid(), result.balance());
 	}
 
 	@Transactional(readOnly = true)
-	public Receipt findReceipt(UUID establishmentId, UUID paymentId, EmployeeActor actor) {
-		requireEstablishment(establishmentId, actor);
-		TuitionPayment payment = tuitionRepository.findPayment(paymentId, establishmentId)
+	public Receipt findReceipt(UUID establishmentId, UUID academicYearId, UUID paymentId, EmployeeActor actor) {
+		validateYear(establishmentId, academicYearId, actor);
+		TuitionPayment payment = tuitionRepository.findPayment(paymentId, establishmentId, academicYearId)
 			.orElseThrow(TuitionNotFoundException::new);
-		StudentFeeCharge charge = tuitionRepository.findChargesForStudent(establishmentId, payment.studentId()).stream()
+		StudentFeeCharge charge = tuitionRepository.findChargesForStudentAndYear(establishmentId, payment.studentId(), academicYearId).stream()
 			.filter(item -> item.id().equals(payment.chargeId())).findFirst().orElseThrow(TuitionNotFoundException::new);
 		BigDecimal paidThroughReceipt = BigDecimal.ZERO;
 		for (TuitionPayment recordedPayment : tuitionRepository.findPayments(charge.id()).stream()
@@ -408,7 +411,7 @@ public class TuitionApplicationService {
 	}
 
 	private void requireTuitionLicense(UUID establishmentId) {
-		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.TUITION,
+		if (!licenseApplicationService.canAccessFeature(establishmentId, LicenseFeature.TUITION,
 			java.time.Instant.now())) {
 			throw new TuitionAccessDeniedException();
 		}

@@ -6,10 +6,9 @@ import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -32,8 +31,9 @@ import com.galactique.gestionecole.tuition.api.dto.TuitionFeeResponse;
 import com.galactique.gestionecole.tuition.api.dto.TuitionFeeTypeResponse;
 import com.galactique.gestionecole.tuition.api.dto.TuitionPaymentMethodResponse;
 import com.galactique.gestionecole.tuition.api.dto.TuitionPaymentResponse;
-import com.galactique.gestionecole.tuition.application.TuitionApplicationService;
 import com.galactique.gestionecole.tuition.application.CreateTuitionFeeCommand;
+import com.galactique.gestionecole.tuition.application.TuitionApplicationService;
+
 import jakarta.validation.Valid;
 
 @RestController
@@ -110,30 +110,30 @@ public class TuitionController {
 			.stream().map(StudentFeeChargeResponse::from).toList();
 	}
 
-	@GetMapping("/api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees")
+	@GetMapping("/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees")
 	@PreAuthorize("hasAuthority('can_tuition_read')")
-	public List<StudentFeeChargeResponse> getStudentCharges(@PathVariable UUID establishmentId,
+	public List<StudentFeeChargeResponse> getStudentCharges(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@PathVariable UUID studentId, Authentication authentication) {
-		return tuitionApplicationService.findStudentCharges(establishmentId, studentId, toActor(authentication))
+		return tuitionApplicationService.findStudentCharges(establishmentId, academicYearId, studentId, toActor(authentication))
 			.stream().map(StudentFeeChargeResponse::from).toList();
 	}
 
-	@PostMapping("/api/v1/establishments/{establishmentId}/students/{studentId}/tuition-fees/{chargeId}/payments")
+	@PostMapping("/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/students/{studentId}/tuition-fees/{chargeId}/payments")
 	@PreAuthorize("hasAuthority('can_payment_record')")
 	@ResponseStatus(HttpStatus.CREATED)
-	public TuitionPaymentResponse recordPayment(@PathVariable UUID establishmentId, @PathVariable UUID studentId,
+	public TuitionPaymentResponse recordPayment(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId, @PathVariable UUID studentId,
 		@PathVariable UUID chargeId, @Valid @RequestBody RecordTuitionPaymentRequest request,
 		Authentication authentication) {
-		return TuitionPaymentResponse.from(tuitionApplicationService.recordPayment(establishmentId,
+		return TuitionPaymentResponse.from(tuitionApplicationService.recordPayment(establishmentId, academicYearId,
 			studentId, chargeId, request.amount(), request.paymentMethodCode(), request.reference(), toActor(authentication)).payment());
 	}
 
-	@GetMapping("/api/v1/establishments/{establishmentId}/payments/{paymentId}/receipt")
+	@GetMapping("/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/payments/{paymentId}/receipt")
 	@PreAuthorize("hasAuthority('can_payment_receipt_read')")
-	public PaymentReceiptResponse getReceipt(@PathVariable UUID establishmentId, @PathVariable UUID paymentId,
+	public PaymentReceiptResponse getReceipt(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId, @PathVariable UUID paymentId,
 		Authentication authentication) {
 		return PaymentReceiptResponse.from(tuitionApplicationService.findReceipt(
-			establishmentId, paymentId, toActor(authentication)));
+			establishmentId, academicYearId, paymentId, toActor(authentication)));
 	}
 
 	@GetMapping("/api/v1/establishments/{establishmentId}/payment-methods")
@@ -172,16 +172,6 @@ public class TuitionController {
 	}
 
 	private EmployeeActor toActor(Authentication authentication) {
-		return new EmployeeActor(authentication.getName(), hasAuthority(authentication, "ADMIN_ACCESS"),
-			hasAuthority(authentication, "ESTABLISHMENT_STAFF_MANAGEMENT"));
-	}
-
-	private boolean hasAuthority(Authentication authentication, String expectedAuthority) {
-		for (GrantedAuthority authority : authentication.getAuthorities()) {
-			if (authority != null && expectedAuthority.equals(authority.getAuthority())) {
-				return true;
-			}
-		}
-		return false;
+		return new EmployeeActor(authentication.getName());
 	}
 }

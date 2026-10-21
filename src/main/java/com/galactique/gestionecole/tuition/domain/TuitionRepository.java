@@ -25,6 +25,7 @@ public interface TuitionRepository {
 	List<TuitionPayment> findPaymentsForChargeBetween(UUID chargeId, UUID establishmentId, UUID studentId,
 		java.time.Instant from, java.time.Instant to);
 	Optional<TuitionPayment> findPayment(UUID paymentId, UUID establishmentId);
+	Optional<TuitionPayment> findPayment(UUID paymentId, UUID establishmentId, UUID academicYearId);
 	TuitionPayment savePayment(StudentFeeCharge charge, String receiptNumber, BigDecimal amount,
 		String paymentMethodCode, String paymentMethodName, String reference, String recordedBy);
 	long nextReceiptNumber();

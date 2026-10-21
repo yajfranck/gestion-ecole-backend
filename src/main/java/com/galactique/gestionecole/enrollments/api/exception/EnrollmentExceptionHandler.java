@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.galactique.gestionecole.enrollments.application.EnrollmentAccessDeniedException;
+import com.galactique.gestionecole.enrollments.application.EnrollmentClassroomCapacityException;
 import com.galactique.gestionecole.enrollments.application.EnrollmentConflictException;
 import com.galactique.gestionecole.enrollments.application.EnrollmentNotFoundException;
 import com.galactique.gestionecole.enrollments.application.EnrollmentPaymentConflictException;
@@ -29,6 +30,11 @@ public class EnrollmentExceptionHandler {
 	@ExceptionHandler({EnrollmentConflictException.class, DataIntegrityViolationException.class})
 	ResponseEntity<ProblemDetail> handleConflict() {
 		return problem(HttpStatus.CONFLICT, "Student already has an enrollment for this academic year");
+	}
+
+	@ExceptionHandler(EnrollmentClassroomCapacityException.class)
+	ResponseEntity<ProblemDetail> handleClassroomCapacity() {
+		return problem(HttpStatus.CONFLICT, "The classroom has reached its maximum student capacity");
 	}
 
 	private ResponseEntity<ProblemDetail> problem(HttpStatus status, String detail) {

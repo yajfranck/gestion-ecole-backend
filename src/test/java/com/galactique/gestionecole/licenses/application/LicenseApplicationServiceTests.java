@@ -16,20 +16,28 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.AnonymousAuthenticationToken;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.establishments.application.EstablishmentApplicationService;
-import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
 import com.galactique.gestionecole.licenses.domain.LicenseOffer;
 import com.galactique.gestionecole.licenses.domain.LicenseRepository;
 import com.galactique.gestionecole.licenses.domain.LicenseState;
 import com.galactique.gestionecole.licenses.domain.PlatformLicense;
+import com.galactique.gestionecole.security.domain.Permission;
+import com.galactique.gestionecole.security.domain.Role;
+import com.galactique.gestionecole.security.domain.UserAccount;
+import com.galactique.gestionecole.security.domain.UserAccountRepository;
 
 @ExtendWith(MockitoExtension.class)
 class LicenseApplicationServiceTests {
@@ -44,11 +52,15 @@ class LicenseApplicationServiceTests {
 	@Mock
 	private EmployeeApplicationService employeeApplicationService;
 
+	@Mock
+	private UserAccountRepository userAccountRepository;
+
 	private LicenseApplicationService service;
 	private LicenseOffer offer;
 
 	@BeforeEach
 	void setUp() {
+		SecurityContextHolder.clearContext();
 		service = new LicenseApplicationService(licenseRepository, establishmentApplicationService,
 			employeeApplicationService);
 		offer = new LicenseOffer(OFFER_ID, "SCHOOL_PLUS", "School Plus",
@@ -108,6 +120,69 @@ class LicenseApplicationServiceTests {
 
 		assertTrue(service.hasFeature(ESTABLISHMENT_ID, LicenseFeature.LEARNING_CONTENT, NOW));
 		assertFalse(service.hasFeature(ESTABLISHMENT_ID, LicenseFeature.ATTENDANCE, NOW));
+	}
+
+	@AfterEach
+	void clearAuthentication() { SecurityContextHolder.clearContext(); }
+
+	@Test
+	void authenticatedGlobalAdminStillRequiresAnActiveLicense() {
+		authenticate("operator", "ROLE_ADMIN");
+		for (LicenseFeature feature : LicenseFeature.values()) {
+			assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, feature, NOW), feature.name());
+		}
+		verify(licenseRepository, org.mockito.Mockito.atLeastOnce()).findLicenses(ESTABLISHMENT_ID);
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of());
+		assertFalse(service.hasFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+	}
+
+	@Test
+	void establishmentAdminAndLegacyAdminAccessAreStillSubjectToLicenseRestrictions() {
+		authenticate("operator", "ADMIN_ACCESS");
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of());
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.LEARNING_CONTENT, NOW));
+		PlatformLicense suspended = new PlatformLicense(8L, ESTABLISHMENT_ID, OFFER_ID, offer.code(), offer.name(),
+			NOW.minusSeconds(60), null, NOW.minusSeconds(1), "admin", NOW);
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of(suspended));
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.LEARNING_CONTENT, NOW));
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of(license(9L, NOW.minusSeconds(60), NOW.minusSeconds(1), LicenseState.EXPIRED)));
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.LEARNING_CONTENT, NOW));
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of(license(10L, NOW.minusSeconds(60), null, LicenseState.ACTIVE)));
+		when(licenseRepository.findEnabledOffer(OFFER_ID)).thenReturn(Optional.of(offer));
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+		assertTrue(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.LEARNING_CONTENT, NOW));
+	}
+
+	@Test
+	void staleAdminClaimsDisabledAccountsAndScopedRolesDoNotGrantAnExemption() {
+		authenticate("operator", "ROLE_ADMIN");
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of());
+		for (UserAccount account : List.of(account("STAFF", true, true, false, null),
+			account("ADMIN", false, true, false, null), account("ADMIN", true, false, false, null),
+			account("ADMIN", true, true, true, null), account("ADMIN", true, true, false, ESTABLISHMENT_ID))) {
+			assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+		}
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+	}
+
+	@Test
+	void anonymousAndUnauthenticatedContextsDoNotGrantAnExemption() {
+		when(licenseRepository.findLicenses(ESTABLISHMENT_ID)).thenReturn(List.of());
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken("operator", "ignored"));
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+		SecurityContextHolder.getContext().setAuthentication(new AnonymousAuthenticationToken("key", "operator", List.of(new SimpleGrantedAuthority("ROLE_ADMIN"))));
+		assertFalse(service.canAccessFeature(ESTABLISHMENT_ID, LicenseFeature.TUITION, NOW));
+		verify(userAccountRepository, never()).findByUsername(any());
+	}
+
+	private void authenticate(String username, String authority) {
+		SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(username, "ignored",
+			List.of(new SimpleGrantedAuthority(authority))));
+	}
+	private UserAccount account(String roleCode, boolean roleEnabled, boolean enabled, boolean locked, UUID scope) {
+		var role = new Role(roleCode, "Operator role", null, roleEnabled, Set.of(new Permission("can_user_read", "Read users")), scope);
+		return new UserAccount(UUID.randomUUID(), "operator", "hash", enabled, locked, NOW, NOW, null, Set.of(role));
 	}
 
 	private PlatformLicense license(Long id, Instant from, Instant until, LicenseState ignoredState) {

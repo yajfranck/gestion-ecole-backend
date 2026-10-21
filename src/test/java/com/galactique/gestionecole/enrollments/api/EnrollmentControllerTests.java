@@ -112,6 +112,30 @@ class EnrollmentControllerTests {
 			.andExpect(status().isForbidden());
 	}
 
+	@Test
+	void enrollmentRequiresAClassroomForTheSelectedClass() throws Exception {
+		Establishment establishment = createEstablishment();
+		String establishmentUrl = "/api/v1/establishments/" + establishment.id();
+		String studentResponse = mockMvc.perform(post(establishmentUrl + "/students")
+			.with(administrator("can_student_create"))
+			.contentType(MediaType.APPLICATION_JSON).content("{\"firstName\":\"Ada\",\"lastName\":\"Lovelace\"}"))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		String studentId = JsonPath.read(studentResponse, "$.id");
+		String yearId = createYear(establishmentUrl, "2026-2027");
+		String classResponse = mockMvc.perform(post(establishmentUrl + "/school-years/" + yearId + "/classes")
+			.with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"EMPTY\",\"name\":\"No classroom\"}"))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		String schoolClassId = JsonPath.read(classResponse, "$.id");
+		mockMvc.perform(post(enrollmentUrl(establishmentUrl, yearId))
+			.with(administrator("can_enrollment_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content(enrollmentRequest(studentId, schoolClassId)))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Cette opération est impossible : aucune salle de classe n'est associée à cette classe. Veuillez d'abord lui affecter au moins une salle."));
+	}
+
 	private String createYear(String establishmentUrl, String name) throws Exception {
 		String response = mockMvc.perform(post(establishmentUrl + "/school-years")
 			.with(administrator("can_academic_year_create"))
@@ -133,7 +157,13 @@ class EnrollmentControllerTests {
 			.andReturn()
 			.getResponse()
 			.getContentAsString();
-		return JsonPath.read(response, "$.id");
+		String schoolClassId = JsonPath.read(response, "$.id");
+		mockMvc.perform(post(establishmentUrl + "/school-years/" + academicYearId + "/classes/" + schoolClassId + "/classrooms")
+			.with(administrator("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Class " + code + "\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		return schoolClassId;
 	}
 
 	private Establishment createEstablishment() {

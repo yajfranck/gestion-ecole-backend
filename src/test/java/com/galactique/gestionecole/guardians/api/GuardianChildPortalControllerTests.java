@@ -1,24 +1,25 @@
 package com.galactique.gestionecole.guardians.api;
 
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.containsInAnyOrder;
-import static org.hamcrest.Matchers.matchesPattern;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import java.util.UUID;
 import java.util.List;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,18 +34,17 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import com.galactique.gestionecole.establishments.domain.Establishment;
-import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.employees.application.CreateEmployeeCommand;
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.employees.application.EmployeeInvitationMailer;
 import com.galactique.gestionecole.employees.domain.Employee;
+import com.galactique.gestionecole.establishments.domain.Establishment;
+import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.positions.application.PositionApplicationService;
 import com.galactique.gestionecole.security.application.CreateRoleCommand;
 import com.galactique.gestionecole.security.application.EstablishmentRoleApplicationService;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest(properties = "management.health.mail.enabled=false")
 @AutoConfigureMockMvc
@@ -100,25 +100,28 @@ class GuardianChildPortalControllerTests {
 		String feeId = createTuitionFee(base, academicYearId, feeTypeId, schoolClassId,
 			"Tuition USD", "100", "USD");
 		createTuitionFee(base, academicYearId, feeTypeId, schoolClassId, "Activity EUR", "30", "EUR");
-		String chargeId = JsonPath.read(mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees")
+		String chargeId = JsonPath.read(mockMvc.perform(get(base + "/school-years/" + academicYearId + "/students/" + studentId + "/tuition-fees")
 			.with(admin("can_tuition_read")))
 			.andReturn().getResponse().getContentAsString(), "$[0].id");
-		mockMvc.perform(post(base + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
 			.with(admin("can_payment_record"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"amount\":25,\"paymentMethodCode\":\"CASH\"}"))
 			.andExpect(status().isCreated());
 
+		String attendanceClassroomId = JsonPath.read(mockMvc.perform(get(base + "/school-years/" + academicYearId
+			+ "/classes/" + schoolClassId + "/classrooms").with(admin("can_school_class_read")))
+			.andExpect(status().isOk()).andReturn().getResponse().getContentAsString(), "$[0].id");
 		mockMvc.perform(put(attendanceUrl(establishment.id(), academicYearId, schoolClassId, "2026-02-12"))
 			.header("Authorization", bearer(attendanceWriterToken))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"entries\":[{\"studentId\":\"" + studentId
+			.content("{\"classroomId\":\"" + attendanceClassroomId + "\",\"entries\":[{\"studentId\":\"" + studentId
 				+ "\",\"status\":\"ABSENT\",\"absenceJustified\":true,"
 				+ "\"comment\":\"Internal note\",\"parentComment\":\"Maladie signalée\"}]}"))
 			.andExpect(status().isOk());
 
-		String portalBase = "/api/v1/guardians/me/children/" + studentId;
-		mockMvc.perform(get(portalBase + "/summary?academicYearId=" + academicYearId)
+		String portalBase = base + "/guardians/me/children/" + studentId;
+		mockMvc.perform(get(portalBase + "/school-years/" + academicYearId + "/summary")
 			.header("Authorization", bearer(parentToken)))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.studentNumber").value(matchesPattern("STU-[0-9]{8,}")))
@@ -152,11 +155,11 @@ class GuardianChildPortalControllerTests {
 			.andExpect(jsonPath("$.records[0].comment").doesNotExist())
 			.andExpect(jsonPath("$.records[0].createdBy").doesNotExist());
 
-		mockMvc.perform(get("/api/v1/guardians/me/children/" + unlinkedStudentId
-			+ "/summary?academicYearId=" + academicYearId)
+		mockMvc.perform(get(base + "/guardians/me/children/" + unlinkedStudentId
+			+ "/school-years/" + academicYearId + "/summary")
 			.header("Authorization", bearer(parentToken)))
 			.andExpect(status().isNotFound());
-		mockMvc.perform(get("/api/v1/guardians/me/children/" + unlinkedStudentId
+		mockMvc.perform(get(base + "/guardians/me/children/" + unlinkedStudentId
 			+ "/school-years/" + academicYearId + "/attendance?from=2026-02-01&to=2026-02-28")
 			.header("Authorization", bearer(parentToken)))
 			.andExpect(status().isNotFound());
@@ -196,7 +199,7 @@ class GuardianChildPortalControllerTests {
 			mockMvc.perform(get(schoolYearsUrl(forbiddenSchoolId)).header("Authorization", bearer(parentToken)))
 				.andExpect(status().isForbidden());
 		}
-		mockMvc.perform(get("/api/v1/guardians/me/children/" + studentId + "/school-years")
+		mockMvc.perform(get(base + "/guardians/me/children/" + studentId + "/school-years")
 			.header("Authorization", bearer(parentToken))).andExpect(status().isNotFound());
 		linkGuardian(otherSchool, otherChildId, email);
 		mockMvc.perform(get(schoolYearsUrl(otherSchool.id().toString()))
@@ -232,11 +235,11 @@ class GuardianChildPortalControllerTests {
 		mockMvc.perform(delete(url + "/" + yearId).header("Authorization", bearer(parentToken)))
 			.andExpect(status().isForbidden());
 		mockMvc.perform(get(url + "/" + yearId).header("Authorization", bearer(parentToken)))
-			.andExpect(status().isForbidden());
+			.andExpect(status().isNotFound());
 		mockMvc.perform(get(url + "/" + yearId + "/periods").header("Authorization", bearer(parentToken)))
 			.andExpect(status().isForbidden());
 		var license = licenseApplicationService.findLicenses(school.id(),
-			new EmployeeActor("admin-tech", true, false)).getFirst();
+			new EmployeeActor("admin-tech")).getFirst();
 		licenseApplicationService.suspend(school.id(), license.id(), "TEST_FIXTURE");
 		mockMvc.perform(get(url).header("Authorization", bearer(parentToken)))
 			.andExpect(status().isForbidden());
@@ -272,7 +275,7 @@ class GuardianChildPortalControllerTests {
 		String email = "attendance-writer-" + UUID.randomUUID() + "@example.org";
 		String roleCode = "ATTENDANCE_WRITE_" + UUID.randomUUID().toString().replace("-", "")
 			.substring(0, 8).toUpperCase();
-		EmployeeActor globalAdmin = new EmployeeActor("admin-tech", true, false);
+		EmployeeActor globalAdmin = new EmployeeActor("admin-tech");
 		establishmentRoleApplicationService.createRole(establishment.id(), new CreateRoleCommand(roleCode,
 			"Attendance Writer", null, List.of("can_attendance_write")), globalAdmin);
 		var position = positionApplicationService.create(establishment.id(), "Attendance Writer",
@@ -340,7 +343,13 @@ class GuardianChildPortalControllerTests {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"PORTAL\",\"name\":\"Portal Class\"}"))
 			.andExpect(status().isCreated()).andReturn();
-		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		String classId = JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/classes/" + classId + "/classrooms")
+			.with(admin("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Portal Class A\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		return classId;
 	}
 
 	private void createEnrollment(String base, String yearId, String studentId, String classId) throws Exception {

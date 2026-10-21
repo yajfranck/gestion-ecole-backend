@@ -47,6 +47,9 @@ class ClassroomMigrationTests {
 				java.time.OffsetDateTime.class, enrollment);
 			Flyway.configure().dataSource(url, "sa", "").locations("classpath:db/migration").load().migrate();
 			assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM classrooms", Integer.class));
+			assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM classrooms WHERE max_students = 40", Integer.class));
+			assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM classrooms WHERE code = 'DEFAULT' OR name = 'Salle principale'",
+				Integer.class));
 			assertEquals(false, jdbc.queryForObject("SELECT enabled FROM classrooms WHERE school_class_id = ?",
 				Boolean.class, archivedClass));
 			assertEquals(firstClass, jdbc.queryForObject("SELECT classroom_id FROM enrollments WHERE id = ?",

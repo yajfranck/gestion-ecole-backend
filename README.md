@@ -61,6 +61,8 @@ Ces flux ont des factures, des reçus, des comptes de suivi et des rapprochement
 
 Les permissions sont attribuées par rôle et limitées au périmètre de l’établissement concerné.
 
+Les autorisations fonctionnelles REST sont déclarées sur les méthodes des contrôleurs avec `@PreAuthorize` et des permissions `can_<entity>_<action>`. Le rôle plateforme `ADMIN` reçoit explicitement `can_establishment_onboard` pour créer des établissements et inviter leur premier administrateur ; ce droit n’est pas déduit de son nom. Les autres rôles administrateurs n’accordent aucun accès automatique, y compris aux licences. Les autorités JWT sont relues en base et limitées au contexte d’établissement ; une révocation s’applique dès la requête suivante. Le périmètre plateforme est attribué explicitement via `security_role_scopes` et reste indépendant des permissions. Tous les comptes restent soumis aux licences, aux liens de propriété, à l’isolation des établissements et aux règles métier. Les catalogues de permissions restent complets ; seules les permissions autorisées sont délégables dans un rôle local.
+
 ## Configuration SMTP Yahoo
 
 Les invitations du personnel utilisent Yahoo SMTP (`smtp.mail.yahoo.com`, port `587`, STARTTLS). L’identifiant par défaut est `franckyaj@yahoo.com`. Le mot de passe n’est pas stocké dans le dépôt : fournir un mot de passe d’application Yahoo dans `SMTP_PASSWORD`.
@@ -80,14 +82,14 @@ app:
   invitations:
     scheme: ${INVITATION_SCHEME:http}
     host: ${INVITATION_HOST:localhost}
-    port: ${INVITATION_PORT:3000}
+    port: ${INVITATION_PORT:4200}
 ```
 
 `host` contient uniquement le nom de domaine ou l’adresse, sans protocole, port ni chemin. Par exemple, `scheme: https`, `host: ecole.example.org`, `port: 443` produisent `https://ecole.example.org:443/accept-invitation` pour le personnel et `/accept-guardian-invitation` pour les tuteurs, avec le token dans le fragment `#token=...`. Ces liens pointent vers le client web ; le port est celui du client web, indépendant de celui de l’API et du serveur SMTP. Les variables `EMPLOYEE_INVITATION_ACCEPT_URL` (ou l’ancienne `STAFF_INVITATION_ACCEPT_URL`) et `GUARDIAN_INVITATION_ACCEPT_URL` restent prioritaires pour remplacer une URL complète, notamment son chemin.
 
 | Rôle | Principales responsabilités |
 |---|---|
-| Administrateur plateforme (`ADMIN`) | Consulter les établissements et le dashboard plateforme, créer un établissement et inviter son premier administrateur d’école |
+| Administrateur plateforme (`ADMIN`) | Administrer les établissements, la sécurité, les licences et le dashboard plateforme selon les permissions explicitement attribuées |
 | Administrateur d’école | Configurer l’école, gérer les rôles et permissions locaux, les années, classes, utilisateurs, modules et paramètres |
 | Direction | Consulter les tableaux de bord et rapports, superviser les opérations |
 | Secrétariat | Gérer les dossiers, inscriptions, classes et communications administratives |
@@ -107,7 +109,7 @@ Le modèle doit permettre de préciser les droits fins sans multiplier inutileme
 - Sites ou campus si l’offre le permet.
 - Années scolaires, périodes, classes et matières.
 - Série facultative par classe (par exemple « Scientifique » ou « Littéraire »), définie librement dans les routes existantes de création et modification des classes via `series`. Plusieurs classes peuvent porter le même libellé ; les classes sans série restent possibles. La liste, la fiche de classe et les classes du dashboard exposent cette information.
-- Plusieurs salles/groupes par classe : une classe « Sixième » peut contenir « Sixième A » et « Sixième B ». Les salles sont gérées sous `classes/{schoolClassId}/classrooms` avec les permissions de gestion des classes. Chaque nouvelle classe reçoit une salle principale (`DEFAULT`), renommable. Une inscription annuelle référence une seule salle ; si plusieurs salles sont actives, `classroomId` doit être choisi explicitement. Le changement de salle dans la même classe conserve l’inscription, ses présences et ses frais. La liste des élèves d’une classe accepte le filtre `classroomId`. Ces groupes d’élèves ne représentent pas un inventaire de locaux physiques partagés.
+- Classes et salles : une classe peut être créée sans salle, seule ou par lot de 1 à 100, avec `POST .../classes` ou `POST .../classes/bulk`. Les salles sont créées séparément sous `classes/{schoolClassId}/classrooms` avec les permissions de gestion des classes ; aucune salle `DEFAULT` n’est ajoutée automatiquement. Une inscription, un changement de salle, les présences, les emplois du temps et l’affectation d’enseignants nécessitent au moins une salle active ; l’API renvoie une erreur métier explicite si la classe n’en possède aucune. Le contenu pédagogique en ligne reste au niveau classe/matière et ne nécessite pas de salle. Une salle doit avoir une capacité maximale positive. Une salle pleine refuse les inscriptions et transferts entrants ; sa capacité ne peut pas être réduite sous l’effectif inscrit. Une inscription annuelle référence une salle ; si plusieurs salles sont actives, `classroomId` doit être choisi explicitement. Le changement de salle dans la même classe conserve l’inscription, ses présences et ses frais. La liste des élèves d’une classe accepte le filtre `classroomId`. Ces groupes d’élèves ne représentent pas un inventaire de locaux physiques partagés.
 - Calendrier scolaire et jours non ouvrés.
 - Emplois du temps quotidiens et hebdomadaires par salle/groupe, avec duplication vers une autre salle.
 - Gestion des utilisateurs, invitations, rôles et désactivation d’accès.
@@ -145,7 +147,7 @@ L’intégration directe à un opérateur de mobile money ou à une banque dépe
 
 ### 4.4 Présences et absences
 
-- Appel des élèves par classe et séance.
+- Appel journalier des élèves par salle de classe. Le champ `classroomId` est obligatoire dans le lot envoyé à l’endpoint existant `PUT .../classes/{schoolClassId}/attendance/{date}`, même pour une classe à salle unique. Tous les élèves doivent être inscrits dans la salle sélectionnée ; un lot mélangeant plusieurs salles est rejeté en entier. La consultation `GET .../attendance?date=...&classroomId=...` filtre la feuille et ses totaux par salle ; sans ce filtre, elle couvre toute la classe.
 - Statuts : présent, absent, retard et absence justifiée.
 - Commentaire ou motif selon les droits.
 - Historique par élève et synthèse par classe.
@@ -180,7 +182,7 @@ Le modèle prévoit les matières, évaluations, notes, coefficients, périodes 
 
 ### 4.8 Tableaux de bord et rapports
 
-`GET /api/v1/dashboard` fournit une vue adaptée au compte authentifié avec `can_dashboard_read`. `ADMIN` reçoit les compteurs des établissements et des licences ; `ESTABLISHMENT_ADMIN` reçoit les effectifs, inscriptions par classe, présences, frais par devise, contenus pédagogiques et licence de son établissement uniquement. Les paramètres facultatifs `academicYearId` et `date` concernent la vue établissement ; aucun identifiant d’établissement fourni par le client ne change le périmètre. Les blocs présences, finances et contenus sont disponibles selon les fonctionnalités actives de la licence. Le contrat détaillé est décrit dans `doc-api.md`.
+`GET /api/v1/dashboard` fournit la vue plateforme avec `can_dashboard_read` et une habilitation de périmètre PLATFORM. La vue établissement exige `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/dashboard`, la même permission et le périmètre demandé. L’année est obligatoire, sans sélection par défaut. Le filtre `date` reste facultatif. Les blocs présences, finances et contenus suivent les fonctionnalités réellement actives de la licence. Le contrat détaillé est décrit dans `doc-api.md`.
 
 - Effectifs par année et classe.
 - Suivi des inscriptions.
@@ -343,12 +345,15 @@ Les migrations initiales sont regroupées avant le premier déploiement :
 - `db/migration-local/V2__seed_local_admin_account.sql` crée uniquement le compte de développement `admin-tech` avec son rôle `ADMIN`.
 - `db/migration/V3__require_learning_content_subject.sql` rend la matière obligatoire pour les cours et devoirs. Avant son application sur une base persistante, les contenus existants sans matière, y compris archivés, doivent recevoir une affectation explicite ; la migration n’invente aucune matière et ne supprime aucun contenu.
 - `db/migration/V4__allow_tuition_fees_for_multiple_classes.sql` ajoute les affectations multiples des frais aux classes et reprend les anciennes affectations à une classe, sans modifier les créances ni les paiements.
-- `db/migration/V5__grant_dashboard_read_to_administrators.sql` attribue `can_dashboard_read` à `ADMIN` et `ESTABLISHMENT_ADMIN`. Renouveler les jetons ou se reconnecter après la migration pour obtenir cette permission.
+- `db/migration/V5__grant_dashboard_read_to_administrators.sql` attribue `can_dashboard_read` à `ADMIN` et `ESTABLISHMENT_ADMIN`. Les autorités du serveur sont relues en base à chaque requête.
 - `db/migration/V6__add_optional_class_series.sql` ajoute `series` aux classes. Les classes existantes conservent leurs données et restent sans série jusqu’à une affectation explicite.
-- `db/migration/V7__add_classrooms_and_enrollment_assignment.sql` crée une salle principale pour chaque classe existante et y rattache ses inscriptions, sans changer leurs identifiants ni leur historique. Les clés étrangères garantissent l’appartenance de la salle à la bonne classe, année et école. `can_enrollment_update` permet de changer la salle dans une même classe ; elle est attribuée à `ESTABLISHMENT_ADMIN` (renouveler le jeton après migration).
+- `db/migration/V7__add_classrooms_and_enrollment_assignment.sql` crée une salle pour chaque classe existante et y rattache ses inscriptions, sans changer leurs identifiants ni leur historique. Les clés étrangères garantissent l’appartenance de la salle à la bonne classe, année et école. `can_enrollment_update` permet de changer la salle dans une même classe ; elle est attribuée à `ESTABLISHMENT_ADMIN` (autorités relues en base à chaque requête).
 - `db/migration/V8__record_enrollment_payment_decision.sql` conserve la décision d’accepter une avance et son auteur pour les nouvelles inscriptions. Les inscriptions antérieures sont conservées sans inventer de paiement ni d’auteur : `advanceAccepted` vaut `false`, `paymentDecisionBy` reste `null`. La nouvelle exigence de paiement s’applique aux créations suivantes ; les frais ajoutés après une inscription sont suivis comme de nouvelles créances.
-- `db/migration/V9__add_classroom_timetables.sql` ajoute les créneaux par salle, leur provenance de copie, les jours non ouvrés et les permissions `can_timetable_read`, `can_timetable_create`, `can_timetable_update`, `can_timetable_delete`, `can_timetable_copy` attribuées à `ESTABLISHMENT_ADMIN`. Renouveler le jeton après migration. Aucun emploi du temps de test n’est créé. L’archivage d’une salle ayant des créneaux actifs est refusé.
-- `db/migration/V10__add_school_year_rollover_links.sql` conserve la provenance des classes, salles et grilles de frais reprises ; elle attribue `can_school_year_rollover` à `ESTABLISHMENT_ADMIN` (renouveler le JWT). GET puis POST `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover` préparent et exécutent la copie vers l’année cible. La précédente disponible peut être archivée. La reprise est atomique et répétable, les frais multiclasse sont étendus au fil des lots ; les types/modes de paiement communs à l’établissement sont réutilisés. Les échéances sont décalées et ajustables. Aucun mouvement financier ni inscription n’est repris ou créé ; les élèves déjà inscrits ne sont pas facturés automatiquement. Détails et exemples dans `doc-api.md` et `swagger.yaml`.
+- `db/migration/V9__add_classroom_timetables.sql` ajoute les créneaux par salle, leur provenance de copie, les jours non ouvrés et les permissions `can_timetable_read`, `can_timetable_create`, `can_timetable_update`, `can_timetable_delete`, `can_timetable_copy` attribuées à `ESTABLISHMENT_ADMIN`. Les autorités sont relues en base à chaque requête. Aucun emploi du temps de test n’est créé. L’archivage d’une salle ayant des créneaux actifs est refusé.
+- `db/migration/V10__add_school_year_rollover_links.sql` conserve la provenance des classes, salles et grilles de frais reprises ; elle attribue `can_school_year_rollover` à `ESTABLISHMENT_ADMIN` (autorités relues à chaque requête). GET puis POST `/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classrooms/rollover` préparent et exécutent la copie vers l’année cible. La précédente disponible peut être archivée. La reprise est atomique et répétable, les frais multiclasse sont étendus au fil des lots ; les types/modes de paiement communs à l’établissement sont réutilisés. Les échéances sont décalées et ajustables. Aucun mouvement financier ni inscription n’est repris ou créé ; les élèves déjà inscrits ne sont pas facturés automatiquement. Détails et exemples dans `doc-api.md` et `swagger.yaml`.
+- `db/migration/V11__add_classroom_capacity.sql` ajoute une capacité initiale de 40 à chaque salle historique et une capacité obligatoire aux nouvelles salles.
+- `db/migration/V18__unify_functional_permissions_and_data_scopes.sql` convertit les autorités historiques en permissions explicites, initialise les périmètres plateforme et conserve les autres droits existants. Les connexions ne réattribuent aucun droit supprimé. Les nouvelles routes et la correspondance exhaustive sont détaillées dans [authorization-migration.md](authorization-migration.md).
+- `db/migration/V12__rename_legacy_default_classrooms.sql` remplace les anciens codes `DEFAULT` et noms « Salle principale » par des groupes ordinaires, sans changer les références.
 
 Le jeu de test VOGT a été retiré : aucun établissement, élève ou licence de test n'est inséré au démarrage.
 Le profil `local` utilise H2 en mémoire : arrêter puis redémarrer le processus recrée la base avec ces migrations.

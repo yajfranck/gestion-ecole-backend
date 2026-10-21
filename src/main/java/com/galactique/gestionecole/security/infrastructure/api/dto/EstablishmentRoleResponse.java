@@ -5,7 +5,6 @@ import java.util.UUID;
 
 import com.galactique.gestionecole.security.domain.Permission;
 import com.galactique.gestionecole.security.domain.Role;
-import com.galactique.gestionecole.security.infrastructure.api.PermissionResponse;
 
 public record EstablishmentRoleResponse(UUID establishmentId, String code, String name,
 	String description, boolean enabled, boolean editable, List<PermissionResponse> permissions) {

@@ -12,8 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.employees.domain.Employee;
-import com.galactique.gestionecole.employees.domain.EmployeeRepository;
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
@@ -24,23 +22,23 @@ import com.galactique.gestionecole.reporting.domain.Dashboard;
 import com.galactique.gestionecole.reporting.domain.DashboardRepository;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
-import com.galactique.gestionecole.security.domain.Role;
+import com.galactique.gestionecole.security.application.CallerScopeService;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 
 @Service
 public class DashboardApplicationService {
+	private final CallerScopeService callerScope;
 	private final UserAccountRepository accounts;
-	private final EmployeeRepository employees;
 	private final EstablishmentRepository establishments;
 	private final AcademicYearRepository years;
 	private final LicenseRepository licenses;
 	private final DashboardRepository dashboard;
 
-	public DashboardApplicationService(UserAccountRepository accounts, EmployeeRepository employees,
+	public DashboardApplicationService(UserAccountRepository accounts,
 		EstablishmentRepository establishments, AcademicYearRepository years, LicenseRepository licenses,
-		DashboardRepository dashboard) {
+		DashboardRepository dashboard, CallerScopeService callerScope) {
+		this.callerScope = callerScope;
 		this.accounts = accounts;
-		this.employees = employees;
 		this.establishments = establishments;
 		this.years = years;
 		this.licenses = licenses;
@@ -48,26 +46,17 @@ public class DashboardApplicationService {
 	}
 
 	@Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
-	public Dashboard getDashboard(String username, UUID academicYearId, LocalDate requestedDate) {
+	public Dashboard getDashboard(String username, UUID establishmentId, UUID academicYearId, LocalDate requestedDate) {
 		var account = accounts.findByUsername(username).filter(a -> a.enabled() && !a.locked())
 			.orElseThrow(DashboardAccessDeniedException::new);
-		List<Role> roles = account.roles().stream().filter(Role::enabled).toList();
-		if (roles.stream().flatMap(role -> role.permissions().stream())
-			.noneMatch(permission -> "can_dashboard_read".equals(permission.code()))) {
-			throw new DashboardAccessDeniedException();
-		}
 		Instant now = Instant.now();
-		if (roles.stream().anyMatch(role -> "ADMIN".equals(role.code()))) {
+		if (establishmentId == null) {
+			callerScope.requirePlatformScope(username);
 			if (academicYearId != null || requestedDate != null) { throw new DashboardValidationException(); }
 			return new Dashboard("PLATFORM", now, dashboard.findPlatformSummary(now), null);
 		}
-		if (roles.stream().noneMatch(role -> "ESTABLISHMENT_ADMIN".equals(role.code()))) {
-			throw new DashboardAccessDeniedException();
-		}
-		Employee employee = employees.findByEmail(account.username()).filter(Employee::enabled)
-			.filter(Employee::establishmentAdmin).filter(e -> account.id().equals(e.userAccountId()))
-			.orElseThrow(DashboardAccessDeniedException::new);
-		Establishment school = establishments.findById(employee.establishmentId()).filter(Establishment::enabled)
+		callerScope.requireEstablishment(username, establishmentId);
+		Establishment school = establishments.findById(establishmentId).filter(Establishment::enabled)
 			.orElseThrow(DashboardNotFoundException::new);
 		LocalDate today = now.atOffset(ZoneOffset.UTC).toLocalDate();
 		AcademicYear year = resolveYear(school.id(), academicYearId, today);
@@ -97,11 +86,7 @@ public class DashboardApplicationService {
 			return years.findByIdAndEstablishmentId(requestedId, schoolId).filter(AcademicYear::enabled)
 				.orElseThrow(DashboardNotFoundException::new);
 		}
-		List<AcademicYear> activeYears = years.findAllByEstablishmentId(schoolId).stream()
-			.filter(AcademicYear::enabled).sorted(Comparator.comparing(AcademicYear::startsOn).reversed()
-				.thenComparing(AcademicYear::id)).toList();
-		return activeYears.stream().filter(y -> !today.isBefore(y.startsOn()) && !today.isAfter(y.endsOn()))
-			.findFirst().orElse(activeYears.isEmpty() ? null : activeYears.getFirst());
+		throw new DashboardValidationException();
 	}
 
 	private PlatformLicense selectLicense(List<PlatformLicense> items, Instant now) {

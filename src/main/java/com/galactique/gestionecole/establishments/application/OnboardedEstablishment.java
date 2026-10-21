@@ -4,5 +4,5 @@ import java.util.UUID;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 
-public record OnboardedEstablishment(Establishment establishment, UUID administratorEmployeeId) {
+public record OnboardedEstablishment(Establishment establishment, UUID administratorEmployeeId, boolean accountLinked) {
 }

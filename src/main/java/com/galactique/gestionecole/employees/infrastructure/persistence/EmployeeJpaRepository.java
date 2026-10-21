@@ -4,8 +4,8 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
-import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -23,6 +23,15 @@ public interface EmployeeJpaRepository extends JpaRepository<EmployeeEntity, UUI
 
 	@EntityGraph(attributePaths = {"position", "position.roleCodes", "directRoleCodes"})
 	Optional<EmployeeEntity> findByEmailIgnoreCase(String email);
+
+	@EntityGraph(attributePaths = {"position", "position.roleCodes", "directRoleCodes"})
+	Optional<EmployeeEntity> findByEmailIgnoreCaseAndEstablishmentId(String email, UUID establishmentId);
+
+	@EntityGraph(attributePaths = {"position", "position.roleCodes", "directRoleCodes"})
+	Optional<EmployeeEntity> findByUserAccountIdAndEstablishmentId(UUID userAccountId, UUID establishmentId);
+
+	@EntityGraph(attributePaths = {"position", "position.roleCodes", "directRoleCodes"})
+	List<EmployeeEntity> findAllByUserAccountId(UUID userAccountId);
 
 	boolean existsByEmployeeNumber(String employeeNumber);
 	boolean existsByEmployeeNumberAndIdNot(String employeeNumber, UUID id);

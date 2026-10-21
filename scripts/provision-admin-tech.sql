@@ -37,9 +37,9 @@ SELECT EXISTS (
 \gset
 
 \if :admin_account_exists
-\echo 'admin-tech already exists; refusing to replace the account.'
+\echo 'admin-tech already exists; preserving its password, roles and permissions.'
 ROLLBACK;
-\quit 4
+\quit 0
 \endif
 
 INSERT INTO security_user_accounts (

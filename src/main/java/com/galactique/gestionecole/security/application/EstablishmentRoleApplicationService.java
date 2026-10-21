@@ -11,30 +11,27 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.galactique.gestionecole.employees.application.EmployeeActor;
-import com.galactique.gestionecole.employees.domain.Employee;
-import com.galactique.gestionecole.employees.domain.EmployeeRepository;
 import com.galactique.gestionecole.security.domain.Permission;
+import com.galactique.gestionecole.security.domain.PermissionCatalog;
 import com.galactique.gestionecole.security.domain.Role;
 import com.galactique.gestionecole.security.domain.SecurityDirectoryRepository;
 
 @Service
 public class EstablishmentRoleApplicationService {
+	private final CallerScopeService callerScope;
 	private static final Pattern CODE_PATTERN = Pattern.compile("[A-Z][A-Z0-9_]{0,63}");
-	private static final Set<String> PLATFORM_PERMISSIONS = Set.of(
-		"ADMIN_ACCESS", "can_establishment_onboard", "can_establishment_read");
+	private static final Set<String> PLATFORM_PERMISSIONS = PermissionCatalog.PLATFORM_ONLY;
 
 	private final SecurityDirectoryRepository securityDirectoryRepository;
-	private final EmployeeRepository employeeRepository;
 
 	public EstablishmentRoleApplicationService(SecurityDirectoryRepository securityDirectoryRepository,
-		EmployeeRepository employeeRepository) {
+		CallerScopeService callerScope) {
+		this.callerScope = callerScope;
 		this.securityDirectoryRepository = securityDirectoryRepository;
-		this.employeeRepository = employeeRepository;
 	}
 
 	@Transactional(readOnly = true)
@@ -47,7 +44,6 @@ public class EstablishmentRoleApplicationService {
 	public List<Permission> findPermissions(UUID establishmentId, EmployeeActor actor) {
 		requireScope(establishmentId, actor);
 		return securityDirectoryRepository.findAllPermissions().stream()
-			.filter(permission -> !PLATFORM_PERMISSIONS.contains(permission.code()))
 			.sorted(java.util.Comparator.comparing(Permission::code))
 			.toList();
 	}
@@ -80,8 +76,8 @@ public class EstablishmentRoleApplicationService {
 
 	private Role buildRole(String code, String name, String description, List<String> permissionCodes,
 		UUID establishmentId) {
-		if (permissionCodes == null || permissionCodes.isEmpty()) {
-			throw new InvalidRoleException("At least one permission is required");
+		if (permissionCodes == null) {
+			throw new InvalidRoleException("Permission codes are required");
 		}
 		Set<String> requestedCodes = new LinkedHashSet<>(permissionCodes);
 		if (requestedCodes.size() != permissionCodes.size()) {
@@ -109,20 +105,8 @@ public class EstablishmentRoleApplicationService {
 	}
 
 	private void requireScope(UUID establishmentId, EmployeeActor actor) {
-		if (actor.globalAdministrator()) {
-			return;
-		}
-		if (!actor.establishmentAdministrator()) {
-			throw new AccessDeniedException("Role management requires an establishment administrator");
-		}
-		employeeRepository.findByEmail(actor.username())
-			.filter(Employee::enabled)
-			.filter(Employee::establishmentAdmin)
-			.filter(employee -> employee.userAccountId() != null)
-			.filter(employee -> establishmentId.equals(employee.establishmentId()))
-			.orElseThrow(() -> new AccessDeniedException("Role management is outside the caller's establishment"));
+		callerScope.requireEstablishment(actor.username(), establishmentId);
 	}
-
 	private String normalizeCode(String code) {
 		String normalized = required(code, "code", 64).toUpperCase(Locale.ROOT);
 		if (!CODE_PATTERN.matcher(normalized).matches()) {

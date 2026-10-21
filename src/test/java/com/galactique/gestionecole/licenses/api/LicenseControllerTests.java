@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,7 +22,6 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest(properties = "management.health.mail.enabled=false")
 @AutoConfigureMockMvc
@@ -72,6 +72,6 @@ class LicenseControllerTests {
 	}
 
 	private static org.springframework.test.web.servlet.request.RequestPostProcessor admin() {
-		return user("admin-tech").authorities(new SimpleGrantedAuthority("ROLE_ADMIN"));
+		return user("admin-tech").authorities(new SimpleGrantedAuthority("can_license_offer_create"), new SimpleGrantedAuthority("can_license_offer_read"), new SimpleGrantedAuthority("can_license_assign"), new SimpleGrantedAuthority("can_license_suspend"), new SimpleGrantedAuthority("can_license_event_read"), new SimpleGrantedAuthority("can_license_read"));
 	}
 }

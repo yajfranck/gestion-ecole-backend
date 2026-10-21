@@ -106,7 +106,7 @@ class RoleManagementControllerTests {
 	}
 
 	private static org.springframework.test.web.servlet.request.RequestPostProcessor administrator() {
-		return user("admin-tech").authorities(new SimpleGrantedAuthority("ADMIN_ACCESS"));
+		return user("admin-tech").authorities(new SimpleGrantedAuthority("can_platform_role_create"), new SimpleGrantedAuthority("can_platform_role_update"), new SimpleGrantedAuthority("can_platform_role_read"));
 	}
 
 	private static String uniqueRoleCode() {

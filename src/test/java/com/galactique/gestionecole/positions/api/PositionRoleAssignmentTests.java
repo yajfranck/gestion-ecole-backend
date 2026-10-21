@@ -10,6 +10,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -22,7 +23,6 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -42,7 +42,7 @@ class PositionRoleAssignmentTests {
 		String customRoleCode = "POSITION_ROLE_" + UUID.randomUUID().toString()
 			.replace("-", "").substring(0, 8).toUpperCase();
 		mockMvc.perform(post("/api/v1/role")
-			.with(administrator("ADMIN_ACCESS"))
+			.with(administrator("can_platform_role_create"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"" + customRoleCode + "\",\"name\":\"Custom Staff\","
 				+ "\"permissionCodes\":[\"can_student_read\"]}"))
@@ -50,10 +50,10 @@ class PositionRoleAssignmentTests {
 		String globalAccessRoleCode = "CUSTOM_ADMIN_" + UUID.randomUUID().toString()
 			.replace("-", "").substring(0, 8).toUpperCase();
 		mockMvc.perform(post("/api/v1/role")
-			.with(administrator("ADMIN_ACCESS"))
+			.with(administrator("can_platform_role_create"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"" + globalAccessRoleCode + "\",\"name\":\"Custom Global Access\","
-				+ "\"permissionCodes\":[\"ADMIN_ACCESS\"]}"))
+				+ "\"permissionCodes\":[\"can_user_read\"]}"))
 			.andExpect(status().isCreated());
 
 		Establishment establishment = establishmentRepository.save(
@@ -63,7 +63,7 @@ class PositionRoleAssignmentTests {
 		String foreignRoleCode = "SCHOOL_ROLE_" + UUID.randomUUID().toString()
 			.replace("-", "").substring(0, 8).toUpperCase();
 		mockMvc.perform(post("/api/v1/establishments/" + otherEstablishment.id() + "/roles")
-			.with(administrator("ADMIN_ACCESS"))
+			.with(administrator("can_role_create"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"" + foreignRoleCode + "\",\"name\":\"Other School Role\","
 				+ "\"permissionCodes\":[\"can_student_read\"]}"))

@@ -12,6 +12,7 @@ public interface EnrollmentRepository {
 	Enrollment updateClassroom(Enrollment enrollment, UUID classroomId);
 
 	boolean existsByStudentIdAndAcademicYearId(UUID studentId, UUID academicYearId);
+	long countByClassroomId(UUID classroomId);
 
 	List<Enrollment> findAllByEstablishmentIdAndAcademicYearId(UUID establishmentId, UUID academicYearId);
 

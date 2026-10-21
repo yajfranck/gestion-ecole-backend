@@ -25,26 +25,32 @@ public class ClassroomEntity {
 	@Column(nullable = false) private UUID schoolClassId;
 	@Column(nullable = false, length = 40) private String code;
 	@Column(nullable = false, length = 100) private String name;
+	@Column(nullable = false) private int maxStudents;
 	@Column(nullable = false) private boolean enabled = true;
 	@Column(nullable = false, updatable = false) private Instant createdAt;
 	@Column(nullable = false) private Instant updatedAt;
 
 	protected ClassroomEntity() { }
 
-	public ClassroomEntity(UUID establishmentId, UUID academicYearId, UUID schoolClassId, String code, String name) {
+	public ClassroomEntity(UUID establishmentId, UUID academicYearId, UUID schoolClassId, String code, String name,
+		int maxStudents) {
 		this.establishmentId = establishmentId;
 		this.academicYearId = academicYearId;
 		this.schoolClassId = schoolClassId;
-		update(code, name);
+		update(code, name, maxStudents);
 	}
 
 	@PrePersist void onCreate() { createdAt = updatedAt = Instant.now(); }
 	@PreUpdate void onUpdate() { updatedAt = Instant.now(); }
 
-	public void update(String code, String name) { this.code = code; this.name = name; }
+	public void update(String code, String name, int maxStudents) {
+		this.code = code;
+		this.name = name;
+		this.maxStudents = maxStudents;
+	}
 	public void archive() { enabled = false; }
 	public Classroom toDomain() {
-		return new Classroom(id, establishmentId, academicYearId, schoolClassId, code, name,
+		return new Classroom(id, establishmentId, academicYearId, schoolClassId, code, name, maxStudents,
 			enabled, createdAt, updatedAt);
 	}
 }

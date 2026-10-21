@@ -9,6 +9,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 public interface EnrollmentJpaRepository extends JpaRepository<EnrollmentEntity, UUID> {
 	Optional<EnrollmentEntity> findByIdAndEstablishmentIdAndAcademicYearId(UUID id, UUID establishmentId, UUID academicYearId);
 	boolean existsByStudentIdAndAcademicYearId(UUID studentId, UUID academicYearId);
+	long countByClassroomId(UUID classroomId);
 
 	List<EnrollmentEntity> findAllByEstablishmentIdAndAcademicYearIdOrderByCreatedAtAsc(
 		UUID establishmentId, UUID academicYearId);

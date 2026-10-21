@@ -16,15 +16,9 @@ import com.galactique.gestionecole.attendance.application.AttendanceNotFoundExce
 import com.galactique.gestionecole.attendance.application.AttendanceValidationException;
 import com.galactique.gestionecole.enrollments.application.EnrollmentApplicationService;
 import com.galactique.gestionecole.enrollments.application.EnrollmentNotFoundException;
+import com.galactique.gestionecole.enrollments.domain.Enrollment;
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarNotFoundException;
-import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarApplicationService;
-import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
-import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
-import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
-import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
-import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.learning.application.LearningContentApplicationService;
 import com.galactique.gestionecole.learning.domain.LearningAttachment;
 import com.galactique.gestionecole.learning.domain.LearningContent;
@@ -32,8 +26,15 @@ import com.galactique.gestionecole.learning.domain.LearningContentPage;
 import com.galactique.gestionecole.learning.domain.LearningContentType;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
-import com.galactique.gestionecole.tuition.application.TuitionApplicationService;
+import com.galactique.gestionecole.schoolclasses.application.AcademicCalendarNotFoundException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarApplicationService;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
+import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
+import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
+import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.tuition.application.TuitionApplicationService.ChargeBalance;
+import com.galactique.gestionecole.tuition.application.TuitionApplicationService;
 import com.galactique.gestionecole.tuition.application.TuitionNotFoundException;
 import com.galactique.gestionecole.tuition.application.TuitionValidationException;
 import com.galactique.gestionecole.tuition.domain.TuitionPayment;
@@ -70,8 +71,8 @@ public class GuardianChildPortalApplicationService {
 		this.licenseApplicationService = licenseApplicationService;
 	}
 	@Transactional(readOnly = true)
-	public ChildSummary findSummary(String username, UUID studentId, UUID academicYearId) {
-		Student student = findLinkedChild(username, studentId);
+	public ChildSummary findSummary(String username, UUID establishmentId, UUID studentId, UUID academicYearId) {
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		var establishment = establishmentRepository.findById(student.establishmentId())
 			.filter(Establishment::enabled).orElseThrow(GuardianNotFoundException::new);
 		AcademicYear year = findYear(student.establishmentId(), academicYearId);
@@ -94,8 +95,8 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<ChargeBalance> findFees(String username, UUID studentId, UUID academicYearId) {
-		Student student = findLinkedChild(username, studentId);
+	public List<ChargeBalance> findFees(String username, UUID establishmentId, UUID studentId, UUID academicYearId) {
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		findEnrollment(student.establishmentId(), academicYearId, studentId);
 		return tuitionApplicationService.findStudentChargesForGuardian(
@@ -103,9 +104,9 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<TuitionPayment> findPayments(String username, UUID studentId, UUID academicYearId,
+	public List<TuitionPayment> findPayments(String username, UUID establishmentId, UUID studentId, UUID academicYearId,
 		UUID chargeId, LocalDate from, LocalDate to) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		findEnrollment(student.establishmentId(), academicYearId, studentId);
 		try {
@@ -119,9 +120,9 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public AttendanceHistory findAttendance(String username, UUID studentId, UUID academicYearId,
+	public AttendanceHistory findAttendance(String username, UUID establishmentId, UUID studentId, UUID academicYearId,
 		LocalDate from, LocalDate to) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		findEnrollment(student.establishmentId(), academicYearId, studentId);
 		try {
@@ -135,9 +136,9 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public LearningContentPage findLearningContent(String username, UUID studentId, UUID academicYearId,
+	public LearningContentPage findLearningContent(String username, UUID establishmentId, UUID studentId, UUID academicYearId,
 		LearningContentType type, int page, int size) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		var enrollment = findEnrollment(student.establishmentId(), academicYearId, studentId);
 		return learningContentApplicationService.listPublishedForGuardian(student.establishmentId(),
@@ -145,9 +146,9 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public LearningContent getLearningContent(String username, UUID studentId, UUID academicYearId,
+	public LearningContent getLearningContent(String username, UUID establishmentId, UUID studentId, UUID academicYearId,
 		UUID contentId) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		var enrollment = findEnrollment(student.establishmentId(), academicYearId, studentId);
 		return learningContentApplicationService.getPublishedForGuardian(student.establishmentId(),
@@ -155,9 +156,9 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<LearningAttachment> findLearningAttachments(String username, UUID studentId,
+	public List<LearningAttachment> findLearningAttachments(String username, UUID establishmentId, UUID studentId,
 		UUID academicYearId, UUID contentId) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		var enrollment = findEnrollment(student.establishmentId(), academicYearId, studentId);
 		return learningContentApplicationService.listAttachmentsForGuardian(student.establishmentId(),
@@ -165,18 +166,19 @@ public class GuardianChildPortalApplicationService {
 	}
 
 	@Transactional(readOnly = true)
-	public LearningContentApplicationService.AttachmentDownload downloadLearningAttachment(String username,
+	public LearningContentApplicationService.AttachmentDownload downloadLearningAttachment(String username, UUID establishmentId,
 		UUID studentId, UUID academicYearId, UUID contentId, UUID attachmentId) {
-		Student student = findLinkedChild(username, studentId);
+		Student student = findLinkedChild(username, establishmentId, studentId);
 		findYear(student.establishmentId(), academicYearId);
 		var enrollment = findEnrollment(student.establishmentId(), academicYearId, studentId);
 		return learningContentApplicationService.downloadForGuardian(student.establishmentId(),
 			academicYearId, enrollment.schoolClassId(), contentId, attachmentId);
 	}
 
-	private Student findLinkedChild(String username, UUID studentId) {
+	private Student findLinkedChild(String username, UUID establishmentId, UUID studentId) {
 		Student student = guardianApplicationService.findLinkedChild(username, studentId);
-		if (!licenseApplicationService.hasFeature(student.establishmentId(), LicenseFeature.PARENT_PORTAL,
+		if (!student.establishmentId().equals(establishmentId)) { throw new GuardianNotFoundException(); }
+		if (!licenseApplicationService.canAccessFeature(student.establishmentId(), LicenseFeature.PARENT_PORTAL,
 			Instant.now())) {
 			throw new GuardianAccessDeniedException();
 		}
@@ -191,7 +193,7 @@ public class GuardianChildPortalApplicationService {
 		}
 	}
 
-	private com.galactique.gestionecole.enrollments.domain.Enrollment findEnrollment(
+	private Enrollment findEnrollment(
 		UUID establishmentId, UUID academicYearId, UUID studentId) {
 		try {
 			return enrollmentApplicationService.findEnrollmentForGuardian(establishmentId, academicYearId, studentId);

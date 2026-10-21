@@ -16,5 +16,7 @@ public interface SecurityAccountProvisioner {
 
 	void updateEmployeeRoles(UUID userAccountId, Set<String> effectiveRoleCodes);
 
+	void addEmployeeRoles(UUID userAccountId, Set<String> roleCodes);
+
 	void disableEmployeeAccount(UUID userAccountId);
 }

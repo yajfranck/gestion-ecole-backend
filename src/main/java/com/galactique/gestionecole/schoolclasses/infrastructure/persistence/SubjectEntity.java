@@ -3,6 +3,8 @@ package com.galactique.gestionecole.schoolclasses.infrastructure.persistence;
 import java.time.Instant;
 import java.util.UUID;
 
+import com.galactique.gestionecole.schoolclasses.domain.Subject;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -12,8 +14,6 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
-
-import com.galactique.gestionecole.schoolclasses.domain.Subject;
 
 @Entity
 @Table(name = "subjects", uniqueConstraints = {
@@ -28,7 +28,7 @@ public class SubjectEntity {
 	@Column(nullable = false)
 	private UUID establishmentId;
 
-	@Column(nullable = false, length = 40)
+	@Column(length = 40)
 	private String code;
 
 	@Column(nullable = false, length = 100)

@@ -3,15 +3,18 @@ package com.galactique.gestionecole.learning.api;
 import static org.hamcrest.Matchers.hasSize;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.UUID;
 
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -21,18 +24,14 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
-import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.learning.application.LearningContentApplicationService;
 import com.galactique.gestionecole.learning.application.LearningContentCommand;
 import com.galactique.gestionecole.learning.application.LearningContentValidationException;
 import com.galactique.gestionecole.learning.domain.LearningContentType;
-
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.EnumSource;
+import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 
 @SpringBootTest(properties = "management.health.mail.enabled=false")
 @AutoConfigureMockMvc
@@ -87,6 +86,23 @@ class LearningContentControllerTests {
 			.andExpect(jsonPath("$.status").value("PUBLISHED"));
 	}
 
+	@Test
+	void staffCanCreateClassLevelLearningContentWithoutAClassroom() throws Exception {
+		Establishment establishment = establishmentRepository.save(
+			"LRN-" + UUID.randomUUID().toString().substring(0, 8), "Learning Test School");
+		licenseApplicationService.assign(establishment.id(),
+			UUID.fromString("c51d6db7-309f-4e85-b884-000000000001"), null, null, "TEST_FIXTURE");
+		String base = "/api/v1/establishments/" + establishment.id();
+		String yearId = createAcademicYear(base);
+		String classId = createClassWithoutClassroom(base, yearId);
+		String learningBase = base + "/school-years/" + yearId + "/classes/" + classId + "/learning-content";
+		String subjectId = createSubject(base);
+		assignSubject(learningBase, subjectId);
+		mockMvc.perform(post(learningBase).with(admin("can_learning_content_create"))
+			.contentType(MediaType.APPLICATION_JSON).content(contentRequest(LearningContentType.LESSON, subjectId)))
+			.andExpect(status().isCreated()).andExpect(jsonPath("$.schoolClassId").value(classId));
+	}
+
 	@ParameterizedTest
 	@EnumSource(LearningContentType.class)
 	void contentRequiresASubjectAssignedToItsClass(LearningContentType type) throws Exception {
@@ -104,7 +120,7 @@ class LearningContentControllerTests {
 		assertThrows(LearningContentValidationException.class, () -> learningContentApplicationService.create(
 			context.establishmentId(), UUID.fromString(context.yearId()), UUID.fromString(context.classId()),
 			new LearningContentCommand(type, "Fractions", null, null, null, null),
-			new EmployeeActor("admin-tech", true, false)));
+			new EmployeeActor("admin-tech")));
 		mockMvc.perform(get(context.learningBase()).with(admin("can_learning_content_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.contents", hasSize(0)));
 		mockMvc.perform(post(context.learningBase()).with(admin("can_learning_content_create"))
@@ -173,10 +189,10 @@ class LearningContentControllerTests {
 	private String createSubject(String base) throws Exception {
 		MvcResult result = mockMvc.perform(post(base + "/subjects").with(admin("can_subject_create"))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content("{\"code\":\"SUB-" + UUID.randomUUID().toString().substring(0, 8)
-				+ "\",\"name\":\"Subject " + UUID.randomUUID() + "\"}"))
+			.content("{\"subjects\":[{\"code\":\"SUB-" + UUID.randomUUID().toString().substring(0, 8)
+				+ "\",\"name\":\"Subject " + UUID.randomUUID() + "\"}]}"))
 			.andExpect(status().isCreated()).andReturn();
-		return com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		return com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$[0].id");
 	}
 
 	private void assignSubject(String learningBase, String subjectId) throws Exception {
@@ -210,6 +226,21 @@ class LearningContentControllerTests {
 			.with(admin("can_school_class_create"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"LEARNING\",\"name\":\"Learning Class\"}"))
+			.andExpect(status().isCreated()).andReturn();
+		String classId = com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/classes/" + classId + "/classrooms")
+			.with(admin("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Learning Class A\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		return classId;
+	}
+
+	private String createClassWithoutClassroom(String base, String academicYearId) throws Exception {
+		MvcResult result = mockMvc.perform(post(base + "/school-years/" + academicYearId + "/classes")
+			.with(admin("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"EMPTY\",\"name\":\"Class without room\"}"))
 			.andExpect(status().isCreated()).andReturn();
 		return com.jayway.jsonpath.JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}

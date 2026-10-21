@@ -1,4 +1,3 @@
 package com.galactique.gestionecole.schoolclasses.application;
 
-public record CreateSchoolClassCommand(String code, String name, String series) {
-}
+public record CreateSchoolClassCommand(String code, String name, String series) { }

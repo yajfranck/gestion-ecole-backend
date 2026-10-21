@@ -11,9 +11,14 @@ public record Student(
 	String studentNumber,
 	String firstName,
 	String lastName,
+	java.time.LocalDate dateOfBirth,
 	boolean enabled,
 	Instant createdAt,
 	Instant updatedAt) {
+	public Student(UUID id, UUID establishmentId, String studentNumber, String firstName, String lastName,
+		boolean enabled, Instant createdAt, Instant updatedAt) {
+		this(id, establishmentId, studentNumber, firstName, lastName, null, enabled, createdAt, updatedAt);
+	}
 	public Student {
 		Objects.requireNonNull(id, "id must not be null");
 		Objects.requireNonNull(establishmentId, "establishmentId must not be null");

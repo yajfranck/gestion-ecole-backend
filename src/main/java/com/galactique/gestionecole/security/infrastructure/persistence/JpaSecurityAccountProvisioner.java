@@ -114,6 +114,14 @@ public class JpaSecurityAccountProvisioner implements SecurityAccountProvisioner
 
 	@Override
 	@Transactional
+	public void addEmployeeRoles(UUID userAccountId, Set<String> roleCodes) {
+		UserAccountEntity account = userAccountJpaRepository.findByIdForUpdate(userAccountId)
+			.orElseThrow(() -> new IllegalStateException(EMPLOYEE_SECURITY_ACCOUNT_NOT_FOUND));
+		resolveEmployeeRoles(roleCodes).forEach(account::addRole);
+	}
+
+	@Override
+	@Transactional
 	public void disableEmployeeAccount(UUID userAccountId) {
 		UserAccountEntity userAccount = userAccountJpaRepository.findById(userAccountId)
 			.orElseThrow(() -> new IllegalStateException(EMPLOYEE_SECURITY_ACCOUNT_NOT_FOUND));

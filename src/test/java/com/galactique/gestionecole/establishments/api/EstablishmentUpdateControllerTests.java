@@ -1,8 +1,8 @@
 package com.galactique.gestionecole.establishments.api;
 
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.Set;
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -39,14 +40,13 @@ import com.galactique.gestionecole.establishments.domain.EstablishmentRepository
 import com.galactique.gestionecole.positions.application.PositionApplicationService;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 import com.galactique.gestionecole.security.infrastructure.security.SecurityUserPrincipal;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("local")
 class EstablishmentUpdateControllerTests {
 	private static final String ADMIN_PASSWORD = "establishment-admin-password";
-	private static final EmployeeActor GLOBAL_ADMIN = new EmployeeActor("admin-tech", true, false);
+	private static final EmployeeActor GLOBAL_ADMIN = new EmployeeActor("admin-tech");
 
 	private final MockMvc mockMvc;
 	private final EstablishmentRepository establishmentRepository;

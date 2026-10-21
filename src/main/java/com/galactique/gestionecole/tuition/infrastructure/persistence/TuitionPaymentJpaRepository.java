@@ -21,4 +21,6 @@ public interface TuitionPaymentJpaRepository extends JpaRepository<TuitionPaymen
 	List<TuitionPaymentEntity> findAllByChargeIdAndEstablishmentIdAndStudentIdAndReceivedAtBetweenOrderByReceivedAtAsc(
 		UUID chargeId, UUID establishmentId, UUID studentId, Instant from, Instant to);
 	Optional<TuitionPaymentEntity> findByIdAndEstablishmentId(UUID id, UUID establishmentId);
+	@Query("select p from TuitionPaymentEntity p, StudentFeeChargeEntity c where p.chargeId = c.id and p.id = :id and p.establishmentId = :school and c.academicYearId = :year and c.establishmentId = :school")
+	Optional<TuitionPaymentEntity> findInYear(@Param("id") UUID id, @Param("school") UUID school, @Param("year") UUID year);
 }

@@ -17,9 +17,10 @@ public class JpaClassroomRepositoryAdapter implements ClassroomRepository {
 	public JpaClassroomRepositoryAdapter(ClassroomJpaRepository repository) { this.repository = repository; }
 
 	@Override
-	public Classroom save(UUID establishmentId, UUID academicYearId, UUID schoolClassId, String code, String name) {
+	public Classroom save(UUID establishmentId, UUID academicYearId, UUID schoolClassId, String code, String name,
+		int maxStudents) {
 		return repository.saveAndFlush(new ClassroomEntity(establishmentId, academicYearId, schoolClassId,
-			code.strip().toUpperCase(Locale.ROOT), name.strip())).toDomain();
+			code.strip().toUpperCase(Locale.ROOT), name.strip(), maxStudents)).toDomain();
 	}
 	@Override @Transactional(readOnly = true)
 	public List<Classroom> findAll(UUID establishmentId, UUID academicYearId, UUID schoolClassId) {
@@ -32,15 +33,17 @@ public class JpaClassroomRepositoryAdapter implements ClassroomRepository {
 			classroomId, establishmentId, academicYearId, schoolClassId).map(ClassroomEntity::toDomain);
 	}
 	@Override
-	public Classroom update(Classroom current, String code, String name) {
+	public Classroom update(Classroom current, String code, String name, int maxStudents) {
 		var entity = findEntity(current);
-		entity.update(code.strip().toUpperCase(Locale.ROOT), name.strip());
+		entity.update(code.strip().toUpperCase(Locale.ROOT), name.strip(), maxStudents);
 		return repository.saveAndFlush(entity).toDomain();
 	}
 	@Override
 	public void archive(Classroom current) { findEntity(current).archive(); }
 	@Override @Transactional(readOnly = true)
 	public boolean hasEnrollments(UUID classroomId) { return repository.countEnrollments(classroomId) > 0; }
+	@Override @Transactional(readOnly = true)
+	public long countEnrollments(UUID classroomId) { return repository.countEnrollments(classroomId); }
 	@Override @Transactional(readOnly = true)
 	public boolean hasTimetableEntries(UUID classroomId) { return repository.countTimetableEntries(classroomId) > 0; }
 	@Override @Transactional(readOnly = true)

@@ -10,7 +10,7 @@ public record Subject(UUID id, UUID establishmentId, String code, String name, b
 	public Subject {
 		Objects.requireNonNull(id, "id must not be null");
 		Objects.requireNonNull(establishmentId, "establishmentId must not be null");
-		code = required(code, "code", 40).toUpperCase(Locale.ROOT);
+		code = code == null ? null : required(code, "code", 40).toUpperCase(Locale.ROOT);
 		name = required(name, "name", 100);
 		Objects.requireNonNull(createdAt, "createdAt must not be null");
 		Objects.requireNonNull(updatedAt, "updatedAt must not be null");

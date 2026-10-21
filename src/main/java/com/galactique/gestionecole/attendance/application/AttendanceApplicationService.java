@@ -30,6 +30,7 @@ import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarAppli
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogAccessDeniedException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
+import com.galactique.gestionecole.schoolclasses.application.SchoolClassOperationalityService;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
 import com.galactique.gestionecole.students.application.StudentAccessDeniedException;
@@ -50,41 +51,52 @@ public class AttendanceApplicationService {
 	private final EnrollmentApplicationService enrollmentApplicationService;
 	private final StudentApplicationService studentApplicationService;
 	private final LicenseApplicationService licenseApplicationService;
+	private final SchoolClassOperationalityService schoolClassOperationalityService;
 
 	public AttendanceApplicationService(AttendanceRepository attendanceRepository,
 		SchoolCalendarApplicationService schoolCalendarApplicationService,
 		SchoolCatalogApplicationService schoolCatalogApplicationService,
 		EnrollmentApplicationService enrollmentApplicationService,
 		StudentApplicationService studentApplicationService,
-		LicenseApplicationService licenseApplicationService) {
+		LicenseApplicationService licenseApplicationService,
+		SchoolClassOperationalityService schoolClassOperationalityService) {
 		this.attendanceRepository = attendanceRepository;
 		this.schoolCalendarApplicationService = schoolCalendarApplicationService;
 		this.schoolCatalogApplicationService = schoolCatalogApplicationService;
 		this.enrollmentApplicationService = enrollmentApplicationService;
 		this.studentApplicationService = studentApplicationService;
 		this.licenseApplicationService = licenseApplicationService;
+		this.schoolClassOperationalityService = schoolClassOperationalityService;
 	}
 
 	@Transactional(readOnly = true)
 	public AttendanceSheet findClassAttendance(UUID establishmentId, UUID academicYearId,
-		UUID schoolClassId, LocalDate date, EmployeeActor actor) {
+		UUID schoolClassId, UUID classroomId, LocalDate date, EmployeeActor actor) {
 		AcademicYear year = findActiveYear(establishmentId, academicYearId, actor);
 		validateDate(date, year);
 		findActiveClass(establishmentId, academicYearId, schoolClassId, actor);
-		List<Enrollment> enrollments = findClassEnrollments(establishmentId, academicYearId, schoolClassId, actor);
+		schoolClassOperationalityService.requireActiveClassroom(establishmentId, academicYearId, schoolClassId);
+		if (classroomId != null) { requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId, actor, false); }
+		List<Enrollment> enrollments = findClassEnrollments(establishmentId, academicYearId, schoolClassId, actor).stream()
+			.filter(enrollment -> classroomId == null || classroomId.equals(enrollment.classroomId())).toList();
 		List<Student> students = findActiveStudents(establishmentId, enrollments, actor);
-		return buildSheet(establishmentId, academicYearId, schoolClassId, date, enrollments, students,
+		return buildSheet(establishmentId, academicYearId, schoolClassId, classroomId, date, enrollments, students,
 			attendanceRepository.findByEnrollmentIdsAndDate(
 				enrollments.stream().map(Enrollment::id).toList(), date));
 	}
 
 	@Transactional
 	public AttendanceSheet recordClassAttendance(UUID establishmentId, UUID academicYearId,
-		UUID schoolClassId, LocalDate date, List<AttendanceEntryCommand> commands, EmployeeActor actor) {
+		UUID schoolClassId, UUID classroomId, LocalDate date, List<AttendanceEntryCommand> commands, EmployeeActor actor) {
 		AcademicYear year = findActiveYear(establishmentId, academicYearId, actor);
 		validateDate(date, year);
 		findActiveClass(establishmentId, academicYearId, schoolClassId, actor);
-		List<Enrollment> enrollments = findClassEnrollments(establishmentId, academicYearId, schoolClassId, actor);
+		schoolClassOperationalityService.requireActiveClassroom(establishmentId, academicYearId, schoolClassId);
+		if (classroomId == null) { throw new AttendanceValidationException("classroomId is required for every attendance batch"); }
+		// The same class lock is used for enrollment transfers and classroom archival.
+		requireClassroom(establishmentId, academicYearId, schoolClassId, classroomId, actor, true);
+		List<Enrollment> enrollments = findClassEnrollments(establishmentId, academicYearId, schoolClassId, actor).stream()
+			.filter(enrollment -> classroomId.equals(enrollment.classroomId())).toList();
 		List<Student> students = findActiveStudents(establishmentId, enrollments, actor);
 		Map<UUID, Enrollment> enrollmentByStudent = mapEnrollmentsByStudent(enrollments);
 		Map<UUID, Student> studentById = mapStudentsById(students);
@@ -97,7 +109,7 @@ public class AttendanceApplicationService {
 		validateExpectedVersions(uniqueCommands, enrollmentByStudent, currentByEnrollment);
 		applyCommands(uniqueCommands, enrollmentByStudent, currentByEnrollment, date, actor.username());
 
-		return buildSheet(establishmentId, academicYearId, schoolClassId, date, enrollments, students,
+		return buildSheet(establishmentId, academicYearId, schoolClassId, classroomId, date, enrollments, students,
 			attendanceRepository.findByEnrollmentIdsAndDate(enrollments.stream().map(Enrollment::id).toList(), date));
 	}
 
@@ -149,7 +161,7 @@ public class AttendanceApplicationService {
 	}
 
 	private AttendanceSheet buildSheet(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
-		LocalDate date, List<Enrollment> enrollments, List<Student> students, List<AttendanceRecord> records) {
+		UUID classroomId, LocalDate date, List<Enrollment> enrollments, List<Student> students, List<AttendanceRecord> records) {
 		Map<UUID, Enrollment> enrollmentByStudent = new HashMap<>();
 		for (Enrollment enrollment : enrollments) {
 			enrollmentByStudent.put(enrollment.studentId(), enrollment);
@@ -175,7 +187,7 @@ public class AttendanceApplicationService {
 				entries.add(new AttendanceSheetEntry(student, attendanceRecord));
 			}
 		}
-		return new AttendanceSheet(establishmentId, academicYearId, schoolClassId, date,
+		return new AttendanceSheet(establishmentId, academicYearId, schoolClassId, classroomId, date,
 			present, absent, entries.size() - present - absent, entries);
 	}
 
@@ -185,7 +197,7 @@ public class AttendanceApplicationService {
 			throw new AttendanceValidationException("Each entry requires a student and a status");
 		}
 		if (!students.containsKey(command.studentId()) || !enrollments.containsKey(command.studentId())) {
-			throw new AttendanceValidationException("Every student must be actively enrolled in the requested class");
+			throw new AttendanceValidationException("Every student must be actively enrolled in the requested classroom");
 		}
 		String comment = command.comment() == null || command.comment().isBlank() ? null : command.comment().strip();
 		String parentComment = command.parentComment() == null || command.parentComment().isBlank()
@@ -296,7 +308,7 @@ public class AttendanceApplicationService {
 	}
 
 	private void requireAttendanceLicense(UUID establishmentId) {
-		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.ATTENDANCE,
+		if (!licenseApplicationService.canAccessFeature(establishmentId, LicenseFeature.ATTENDANCE,
 			java.time.Instant.now())) {
 			throw new AttendanceAccessDeniedException();
 		}
@@ -321,6 +333,21 @@ public class AttendanceApplicationService {
 		} catch (EnrollmentNotFoundException exception) {
 			throw new AttendanceNotFoundException();
 		} catch (EnrollmentAccessDeniedException exception) {
+			throw new AttendanceAccessDeniedException();
+		}
+	}
+
+	private void requireClassroom(UUID establishmentId, UUID academicYearId, UUID schoolClassId,
+		UUID classroomId, EmployeeActor actor, boolean lock) {
+		try {
+			if (lock) {
+				schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId, schoolClassId, classroomId, actor);
+			} else {
+				schoolCatalogApplicationService.findClassroom(establishmentId, academicYearId, schoolClassId, classroomId, actor);
+			}
+		} catch (SchoolCatalogNotFoundException exception) {
+			throw new AttendanceNotFoundException();
+		} catch (SchoolCatalogAccessDeniedException exception) {
 			throw new AttendanceAccessDeniedException();
 		}
 	}

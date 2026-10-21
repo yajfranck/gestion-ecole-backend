@@ -31,13 +31,13 @@ public class EstablishmentOnboardingApplicationService {
 	@Transactional
 	public OnboardedEstablishment onboard(OnboardEstablishmentRequest request, String initiatedBy) {
 		var establishment = establishmentApplicationService.create(request.code(), request.name());
-		EmployeeActor onboardingActor = new EmployeeActor(initiatedBy, true, false);
+		EmployeeActor onboardingActor = new EmployeeActor(initiatedBy);
 		var position = positionApplicationService.create(establishment.id(), ADMINISTRATOR_POSITION_NAME,
 			Set.of("ESTABLISHMENT_ADMIN"), onboardingActor);
 		var administrator = request.administrator();
 		var employee = employeeApplicationService.invite(new CreateEmployeeCommand(
 			administrator.employeeNumber(), administrator.firstName(), administrator.lastName(),
 			administrator.email(), position.id(), Set.of()), onboardingActor);
-		return new OnboardedEstablishment(establishment, employee.id());
+		return new OnboardedEstablishment(establishment, employee.id(), employee.userAccountId() != null);
 	}
 }

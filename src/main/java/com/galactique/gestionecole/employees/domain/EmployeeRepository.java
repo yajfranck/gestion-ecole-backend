@@ -21,6 +21,12 @@ public interface EmployeeRepository {
 
 	Optional<Employee> findByEmail(String email);
 
+	Optional<Employee> findByEmailAndEstablishmentId(String email, UUID establishmentId);
+
+	Optional<Employee> findByUserAccountIdAndEstablishmentId(UUID userAccountId, UUID establishmentId);
+
+	List<Employee> findAllByUserAccountId(UUID userAccountId);
+
 	Optional<Employee> findByIdForUpdate(UUID id);
 
 	List<Employee> findAll();

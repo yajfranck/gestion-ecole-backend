@@ -1,7 +1,7 @@
 package com.galactique.gestionecole.tuition.api;
 
-import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -26,7 +27,6 @@ import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -83,7 +83,7 @@ class TuitionControllerTests {
 			.andExpect(jsonPath("$.chargesCreated").value(1))
 			.andReturn();
 		String feeId = JsonPath.read(feeResult.getResponse().getContentAsString(), "$.fee.id");
-		assertClassFeeScope(feeResult, base, schoolClassId, otherStudentId);
+		assertClassFeeScope(feeResult, base, academicYearId, schoolClassId, otherStudentId);
 		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
 			base + "/tuition-fee-types/" + feeTypeId)
 			.with(admin("can_tuition_fee_type_update"))
@@ -96,7 +96,7 @@ class TuitionControllerTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[0].feeTypeName").value("Tuition"));
 
-		String chargesUrl = base + "/students/" + studentId + "/tuition-fees";
+		String chargesUrl = base + "/school-years/" + academicYearId + "/students/" + studentId + "/tuition-fees";
 		MvcResult charges = mockMvc.perform(get(chargesUrl).with(admin("can_tuition_read")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$", hasSize(1)))
@@ -104,8 +104,8 @@ class TuitionControllerTests {
 			.andReturn();
 		String chargeId = JsonPath.read(charges.getResponse().getContentAsString(), "$[0].id");
 
-		MvcResult firstPayment = recordPayment(base, studentId, chargeId, "30.00");
-		mockMvc.perform(post(base + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
+		MvcResult firstPayment = recordPayment(base, academicYearId, studentId, chargeId, "30.00");
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
 			.with(admin("can_payment_record"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"amount\":20.00,\"paymentMethodCode\":\"CASH\",\"reference\":\"cash-002\"}"))
@@ -120,7 +120,7 @@ class TuitionControllerTests {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"firstName\":\"Augusta\"}"))
 			.andExpect(status().isOk());
-		mockMvc.perform(get(base + "/payments/" + firstPaymentId + "/receipt")
+		mockMvc.perform(get(base + "/school-years/" + academicYearId + "/payments/" + firstPaymentId + "/receipt")
 			.with(admin("can_payment_receipt_read")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.receiptNumber").value(firstReceiptNumber))
@@ -142,7 +142,7 @@ class TuitionControllerTests {
 			.andExpect(jsonPath("$", hasSize(1)))
 			.andExpect(jsonPath("$[0].balance").value(50.00));
 
-		mockMvc.perform(post(base + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/students/" + studentId + "/tuition-fees/" + chargeId + "/payments")
 			.with(admin("can_payment_record"))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"amount\":50.01,\"paymentMethodCode\":\"CASH\"}"))
@@ -221,13 +221,13 @@ class TuitionControllerTests {
 		String newExcludedStudentId = createStudent(base);
 		createEnrollment(base, yearId, newExcludedStudentId, excludedClassId);
 		for (String studentId : java.util.List.of(firstStudentId, secondStudentId, newStudentId)) {
-			mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+			mockMvc.perform(get(base + "/school-years/" + yearId + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
 				.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(1)))
 				.andExpect(jsonPath("$[0].feeId").value(feeId))
 				.andExpect(jsonPath("$[0].amount").value(100.00));
 		}
 		for (String studentId : java.util.List.of(excludedStudentId, newExcludedStudentId)) {
-			mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+			mockMvc.perform(get(base + "/school-years/" + yearId + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
 				.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
 		}
 		mockMvc.perform(post(feesUrl + "/" + feeId + "/apply").with(admin("can_tuition_apply")))
@@ -256,7 +256,7 @@ class TuitionControllerTests {
 		}
 		mockMvc.perform(get(feesUrl).with(admin("can_tuition_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
-		mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+		mockMvc.perform(get(base + "/school-years/" + yearId + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
 	}
 
@@ -290,7 +290,7 @@ class TuitionControllerTests {
 		}
 		mockMvc.perform(get(feesUrl).with(admin("can_tuition_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
-		mockMvc.perform(get(base + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
+		mockMvc.perform(get(base + "/school-years/" + yearId + "/students/" + studentId + "/tuition-fees").with(admin("can_tuition_read")))
 			.andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
 	}
 
@@ -313,13 +313,13 @@ class TuitionControllerTests {
 		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
 	}
 
-	private void assertClassFeeScope(MvcResult feeResult, String establishmentUrl,
+	private void assertClassFeeScope(MvcResult feeResult, String establishmentUrl, String yearId,
 		String schoolClassId, String otherStudentId) throws Exception {
 		String response = feeResult.getResponse().getContentAsString();
 		org.junit.jupiter.api.Assertions.assertEquals("SCHOOL_CLASS", JsonPath.read(response, "$.fee.scope"));
 		org.junit.jupiter.api.Assertions.assertEquals(schoolClassId, JsonPath.read(response, "$.fee.schoolClassId"));
 		org.junit.jupiter.api.Assertions.assertEquals(java.util.List.of(schoolClassId), JsonPath.read(response, "$.fee.schoolClassIds"));
-		mockMvc.perform(get(establishmentUrl + "/students/" + otherStudentId + "/tuition-fees")
+		mockMvc.perform(get(establishmentUrl + "/school-years/" + yearId + "/students/" + otherStudentId + "/tuition-fees")
 			.with(admin("can_tuition_read")))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$", hasSize(0)));
@@ -350,7 +350,13 @@ class TuitionControllerTests {
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("{\"code\":\"" + code + "\",\"name\":\"Class " + code + "\"}"))
 			.andExpect(status().isCreated()).andReturn();
-		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		String classId = JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		mockMvc.perform(post(establishmentUrl + "/school-years/" + yearId + "/classes/" + classId + "/classrooms")
+			.with(admin("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Class " + code + "\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		return classId;
 	}
 
 	private void createEnrollment(String establishmentUrl, String yearId, String studentId, String schoolClassId)
@@ -362,9 +368,9 @@ class TuitionControllerTests {
 			.andExpect(status().isCreated());
 	}
 
-	private MvcResult recordPayment(String establishmentUrl, String studentId, String chargeId, String amount)
+	private MvcResult recordPayment(String establishmentUrl, String yearId, String studentId, String chargeId, String amount)
 		throws Exception {
-		return mockMvc.perform(post(establishmentUrl + "/students/" + studentId
+		return mockMvc.perform(post(establishmentUrl + "/school-years/" + yearId + "/students/" + studentId
 			+ "/tuition-fees/" + chargeId + "/payments")
 			.with(admin("can_payment_record"))
 			.contentType(MediaType.APPLICATION_JSON)

@@ -1,10 +1,7 @@
 package com.galactique.gestionecole.employees.infrastructure.persistence;
 
-import com.galactique.gestionecole.positions.infrastructure.persistence.PositionEntity;
-import com.galactique.gestionecole.positions.infrastructure.persistence.PositionJpaRepository;
-
-import java.util.List;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
@@ -14,6 +11,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.galactique.gestionecole.employees.domain.Employee;
 import com.galactique.gestionecole.employees.domain.EmployeeRepository;
+import com.galactique.gestionecole.positions.infrastructure.persistence.PositionEntity;
+import com.galactique.gestionecole.positions.infrastructure.persistence.PositionJpaRepository;
 
 @Repository
 public class JpaEmployeeRepositoryAdapter implements EmployeeRepository {
@@ -70,6 +69,24 @@ public class JpaEmployeeRepositoryAdapter implements EmployeeRepository {
 	@Transactional(readOnly = true)
 	public Optional<Employee> findByEmail(String email) {
 		return jpaRepository.findByEmailIgnoreCase(email).map(this::toDomain);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<Employee> findByEmailAndEstablishmentId(String email, UUID establishmentId) {
+		return jpaRepository.findByEmailIgnoreCaseAndEstablishmentId(email, establishmentId).map(this::toDomain);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<Employee> findByUserAccountIdAndEstablishmentId(UUID userAccountId, UUID establishmentId) {
+		return jpaRepository.findByUserAccountIdAndEstablishmentId(userAccountId, establishmentId).map(this::toDomain);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public List<Employee> findAllByUserAccountId(UUID userAccountId) {
+		return jpaRepository.findAllByUserAccountId(userAccountId).stream().map(this::toDomain).toList();
 	}
 
 	@Override
@@ -132,7 +149,7 @@ public class JpaEmployeeRepositoryAdapter implements EmployeeRepository {
 
 	private Employee toDomain(EmployeeEntity entity) {
 		Set<String> effectiveRoleCodes = new LinkedHashSet<>(entity.getDirectRoleCodes());
-		effectiveRoleCodes.addAll(entity.getPosition().getRoleCodes());
+		if (entity.getPosition().isEnabled()) { effectiveRoleCodes.addAll(entity.getPosition().getRoleCodes()); }
 		return new Employee(
 			entity.getId(),
 			entity.getEmployeeNumber(),

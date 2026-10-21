@@ -1,8 +1,8 @@
 package com.galactique.gestionecole.tuition.infrastructure.persistence;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -10,15 +10,15 @@ import java.util.UUID;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.galactique.gestionecole.students.domain.Student;
 import com.galactique.gestionecole.tuition.domain.StudentFeeCharge;
 import com.galactique.gestionecole.tuition.domain.TuitionFee;
-import com.galactique.gestionecole.tuition.domain.TuitionPayment;
-import com.galactique.gestionecole.tuition.domain.TuitionPaymentMethod;
-import com.galactique.gestionecole.tuition.domain.TuitionRepository;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeDraft;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeType;
 import com.galactique.gestionecole.tuition.domain.TuitionFeeTypeDraft;
-import com.galactique.gestionecole.students.domain.Student;
+import com.galactique.gestionecole.tuition.domain.TuitionPayment;
+import com.galactique.gestionecole.tuition.domain.TuitionPaymentMethod;
+import com.galactique.gestionecole.tuition.domain.TuitionRepository;
 
 @Repository
 public class JpaTuitionRepositoryAdapter implements TuitionRepository {
@@ -153,6 +153,12 @@ public class JpaTuitionRepositoryAdapter implements TuitionRepository {
 	public Optional<TuitionPayment> findPayment(UUID paymentId, UUID establishmentId) {
 		return paymentRepository.findByIdAndEstablishmentId(paymentId, establishmentId)
 			.map(entity -> entity.toDomain());
+	}
+
+	@Override
+	@Transactional(readOnly = true)
+	public Optional<TuitionPayment> findPayment(UUID paymentId, UUID establishmentId, UUID academicYearId) {
+		return paymentRepository.findInYear(paymentId, establishmentId, academicYearId).map(TuitionPaymentEntity::toDomain);
 	}
 
 	@Override

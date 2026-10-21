@@ -1,8 +1,8 @@
 package com.galactique.gestionecole.security.infrastructure.api.controller;
 
 import static org.hamcrest.Matchers.hasItem;
-import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -64,8 +64,8 @@ class EstablishmentRoleControllerTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$[*].code", hasItem("can_student_read")))
 			.andExpect(jsonPath("$[*].code", not(hasItem("ADMIN_ACCESS"))))
-			.andExpect(jsonPath("$[*].code", not(hasItem("can_establishment_read"))))
-			.andExpect(jsonPath("$[*].code", not(hasItem("can_establishment_onboard"))));
+			.andExpect(jsonPath("$[*].code", hasItem("can_establishment_read")))
+			.andExpect(jsonPath("$[*].code", hasItem("can_establishment_onboard")));
 
 		mockMvc.perform(post(rolesUrl)
 			.with(schoolAdmin(schoolAdmin.email()))

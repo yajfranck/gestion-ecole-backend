@@ -3,7 +3,6 @@ package com.galactique.gestionecole.schoolclasses.api.controller;
 import java.util.List;
 import java.util.UUID;
 
-import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
@@ -18,10 +17,12 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.galactique.gestionecole.employees.application.EmployeeActor;
-import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.api.dto.ClassroomResponse;
 import com.galactique.gestionecole.schoolclasses.api.dto.CreateClassroomRequest;
 import com.galactique.gestionecole.schoolclasses.api.dto.UpdateClassroomRequest;
+import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
+
+import jakarta.validation.Valid;
 
 @RestController
 @RequestMapping("/api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}/classrooms")
@@ -51,7 +52,7 @@ public class ClassroomController {
 	public ClassroomResponse create(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@PathVariable UUID schoolClassId, @Valid @RequestBody CreateClassroomRequest request, Authentication authentication) {
 		return ClassroomResponse.from(catalog.createClassroom(establishmentId, academicYearId, schoolClassId,
-			request.code(), request.name(), actor(authentication)));
+			request.code(), request.name(), request.maxStudents(), actor(authentication)));
 	}
 
 	@PatchMapping("/{classroomId}")
@@ -60,7 +61,7 @@ public class ClassroomController {
 		@PathVariable UUID schoolClassId, @PathVariable UUID classroomId,
 		@Valid @RequestBody UpdateClassroomRequest request, Authentication authentication) {
 		return ClassroomResponse.from(catalog.updateClassroom(establishmentId, academicYearId, schoolClassId,
-			classroomId, request.code(), request.name(), actor(authentication)));
+			classroomId, request.code(), request.name(), request.maxStudents(), actor(authentication)));
 	}
 
 	@DeleteMapping("/{classroomId}")
@@ -72,8 +73,6 @@ public class ClassroomController {
 	}
 
 	private EmployeeActor actor(Authentication authentication) {
-		var authorities = authentication.getAuthorities().stream().map(authority -> authority.getAuthority()).toList();
-		return new EmployeeActor(authentication.getName(), authorities.contains("ADMIN_ACCESS"),
-			authorities.contains("ESTABLISHMENT_STAFF_MANAGEMENT"));
+		return new EmployeeActor(authentication.getName());
 	}
 }

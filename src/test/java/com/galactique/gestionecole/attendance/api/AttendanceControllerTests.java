@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,23 +34,25 @@ import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.employees.application.EmployeeInvitationMailer;
 import com.galactique.gestionecole.employees.domain.Employee;
+import com.galactique.gestionecole.enrollments.domain.EnrollmentRepository;
 import com.galactique.gestionecole.establishments.domain.Establishment;
 import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.galactique.gestionecole.positions.application.PositionApplicationService;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
-import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
+import com.galactique.gestionecole.positions.application.PositionApplicationService;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
+import com.galactique.gestionecole.schoolclasses.domain.SchoolClassRepository;
 import com.galactique.gestionecole.security.application.CreateRoleCommand;
 import com.galactique.gestionecole.security.application.EstablishmentRoleApplicationService;
 import com.galactique.gestionecole.security.domain.UserAccountRepository;
 import com.galactique.gestionecole.security.infrastructure.security.SecurityUserPrincipal;
-import com.jayway.jsonpath.JsonPath;
+import com.galactique.gestionecole.support.LicensedEstablishmentFixture;
 
 @SpringBootTest(properties = "management.health.mail.enabled=false")
 @AutoConfigureMockMvc
 @ActiveProfiles("local")
 class AttendanceControllerTests {
 	private static final String ADMIN_PASSWORD = "attendance-operator-password";
-	private static final EmployeeActor GLOBAL_ADMIN = new EmployeeActor("admin-tech", true, false);
+	private static final EmployeeActor GLOBAL_ADMIN = new EmployeeActor("admin-tech");
 	private static final String ATTENDANCE_DATE = "2026-02-12";
 
 	private final MockMvc mockMvc;
@@ -59,6 +62,13 @@ class AttendanceControllerTests {
 	private final EmployeeApplicationService employeeApplicationService;
 	private final UserAccountRepository userAccountRepository;
 	private final LicenseApplicationService licenseApplicationService;
+
+	@Autowired
+	private ClassroomRepository classroomRepository;
+	@Autowired
+	private SchoolClassRepository schoolClassRepository;
+	@Autowired
+	private EnrollmentRepository enrollmentRepository;
 
 	@MockitoBean
 	private EmployeeInvitationMailer invitationMailer;
@@ -91,7 +101,7 @@ class AttendanceControllerTests {
 			.andReturn();
 		assertNotNull(emptySheet.getResponse().getContentAsString());
 
-		String initialRequest = batch(entry(fixture.firstStudentId(), "PRESENT", false, null),
+		String initialRequest = batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null),
 			entry(fixture.secondStudentId(), "ABSENT", true, "Fièvre", "Maladie signalée", null));
 		MvcResult initial = mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE))
 			.header("Authorization", bearer(fixture.accessToken()))
@@ -117,7 +127,7 @@ class AttendanceControllerTests {
 		MvcResult correction = mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE))
 			.header("Authorization", bearer(fixture.accessToken()))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(batch(entry(fixture.firstStudentId(), "ABSENT", false, "Arrivé après l’appel", null,
+			.content(batch(fixture, entry(fixture.firstStudentId(), "ABSENT", false, "Arrivé après l’appel", null,
 				(String) originalRecord.get("updatedAt")))))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.presentCount").value(0))
@@ -130,7 +140,7 @@ class AttendanceControllerTests {
 		mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE))
 			.header("Authorization", bearer(fixture.accessToken()))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(batch(entry(fixture.firstStudentId(), "PRESENT", false, null,
+			.content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null,
 				(String) originalRecord.get("updatedAt")))))
 			.andExpect(status().isConflict());
 
@@ -163,7 +173,7 @@ class AttendanceControllerTests {
 		mockMvc.perform(put(attendanceWriteUrl(fixture, "2026-02-13"))
 			.header("Authorization", bearer(fixture.accessToken()))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(batch(entry(fixture.firstStudentId(), "PRESENT", false, null),
+			.content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null),
 				entry(UUID.randomUUID().toString(), "ABSENT", false, null))))
 			.andExpect(status().isBadRequest());
 		mockMvc.perform(get(nextDateUrl).header("Authorization", bearer(fixture.accessToken())))
@@ -173,13 +183,13 @@ class AttendanceControllerTests {
 		mockMvc.perform(put(attendanceWriteUrl(fixture, "2026-02-13"))
 			.header("Authorization", bearer(fixture.accessToken()))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(batch(entry(fixture.firstStudentId(), "PRESENT", false, null),
+			.content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null),
 				entry(fixture.firstStudentId(), "ABSENT", false, null))))
 			.andExpect(status().isBadRequest());
 		mockMvc.perform(put(attendanceWriteUrl(fixture, "2026-02-13"))
 			.header("Authorization", bearer(fixture.accessToken()))
 			.contentType(MediaType.APPLICATION_JSON)
-			.content(batch(entry(fixture.firstStudentId(), "PRESENT", true, null))))
+			.content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", true, null))))
 			.andExpect(status().isBadRequest());
 
 		Establishment otherEstablishment = createEstablishment();
@@ -193,6 +203,89 @@ class AttendanceControllerTests {
 		mockMvc.perform(get(attendanceSheetUrl(fixture, "2026-02-13"))
 			.with(user(new SecurityUserPrincipal(globalAdmin))))
 			.andExpect(status().isForbidden());
+	}
+
+	@Test
+	void requiresAnExplicitClassroomEvenWhenTheClassHasOnlyOne() throws Exception {
+		var fixture = createFixture();
+		String valid = batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null));
+		for (String invalid : List.of(valid.replace("\"classroomId\":\"" + fixture.classroomId() + "\",", ""),
+			valid.replace("\"" + fixture.classroomId() + "\"", "null"),
+			valid.replace(fixture.classroomId(), "invalid-uuid"),
+			"{\"classroomId\":\"" + fixture.classroomId() + "\",\"entries\":[null]}")) {
+			mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE))
+				.header("Authorization", bearer(fixture.accessToken())).contentType(MediaType.APPLICATION_JSON).content(invalid))
+				.andExpect(status().isBadRequest());
+		}
+		mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken())))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.unreportedCount").value(2));
+		mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE))
+			.header("Authorization", bearer(fixture.accessToken())).contentType(MediaType.APPLICATION_JSON).content(valid))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.classroomId").value(fixture.classroomId()))
+			.andExpect(jsonPath("$.presentCount").value(1));
+	}
+
+	@Test
+	void recordsAndReadsOnlyTheSelectedClassroomAndRejectsMixedBatchesAtomically() throws Exception {
+		var fixture = createFixture();
+		UUID year = UUID.fromString(fixture.academicYearId());
+		UUID schoolClass = UUID.fromString(fixture.schoolClassId());
+		var secondRoom = classroomRepository.save(fixture.establishmentId(), year, schoolClass, "B", "Room B", 40);
+		var enrollment = enrollmentRepository.findByEstablishmentIdAndAcademicYearIdAndStudentId(
+			fixture.establishmentId(), year, UUID.fromString(fixture.secondStudentId())).orElseThrow();
+		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(
+			"/api/v1/establishments/" + fixture.establishmentId() + "/school-years/" + year + "/enrollments/" + enrollment.id())
+			.with(admin("can_enrollment_update")).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"classroomId\":\"" + secondRoom.id() + "\"}")).andExpect(status().isOk());
+		String mixed = batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null),
+			entry(fixture.secondStudentId(), "ABSENT", false, null));
+		mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken()))
+			.contentType(MediaType.APPLICATION_JSON).content(mixed)).andExpect(status().isBadRequest());
+		mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken())))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.unreportedCount").value(2));
+		mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken()))
+			.contentType(MediaType.APPLICATION_JSON).content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null))))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.entries", org.hamcrest.Matchers.hasSize(1)))
+			.andExpect(jsonPath("$.presentCount").value(1)).andExpect(jsonPath("$.unreportedCount").value(0));
+		String absent = batch(fixture, entry(fixture.secondStudentId(), "ABSENT", true, "Malade"))
+			.replace(fixture.classroomId(), secondRoom.id().toString());
+		mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken()))
+			.contentType(MediaType.APPLICATION_JSON).content(absent)).andExpect(status().isOk())
+			.andExpect(jsonPath("$.classroomId").value(secondRoom.id().toString())).andExpect(jsonPath("$.absentCount").value(1))
+			.andExpect(jsonPath("$.entries[0].studentId").value(fixture.secondStudentId()));
+		mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).param("classroomId", fixture.classroomId())
+			.header("Authorization", bearer(fixture.accessToken()))).andExpect(status().isOk())
+			.andExpect(jsonPath("$.presentCount").value(1)).andExpect(jsonPath("$.absentCount").value(0))
+			.andExpect(jsonPath("$.entries", org.hamcrest.Matchers.hasSize(1)));
+		mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken())))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.presentCount").value(1)).andExpect(jsonPath("$.absentCount").value(1));
+	}
+
+	@Test
+	void rejectsClassroomsFromAnotherClassYearEstablishmentOrArchived() throws Exception {
+		var fixture = createFixture();
+		var foreign = createFixture();
+		UUID year = UUID.fromString(fixture.academicYearId());
+		var otherClass = schoolClassRepository.save(fixture.establishmentId(), year, "OTHER", "Other class", null);
+		var otherRoom = classroomRepository.save(fixture.establishmentId(), year, otherClass.id(), "A", "Other room", 40);
+		var otherYear = mockMvc.perform(post("/api/v1/establishments/" + fixture.establishmentId() + "/school-years")
+			.with(admin("can_academic_year_create")).contentType(MediaType.APPLICATION_JSON)
+			.content("{\"name\":\"2025\",\"startsOn\":\"2025-01-01\",\"endsOn\":\"2025-12-31\"}"))
+			.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+		UUID otherYearId = UUID.fromString(JsonPath.read(otherYear, "$.id"));
+		var oldClass = schoolClassRepository.save(fixture.establishmentId(), otherYearId, "OLD", "Old class", null);
+		var oldRoom = classroomRepository.save(fixture.establishmentId(), otherYearId, oldClass.id(), "A", "Old room", 40);
+		var archived = classroomRepository.save(fixture.establishmentId(), year, UUID.fromString(fixture.schoolClassId()), "ARC", "Archived", 40);
+		classroomRepository.archive(archived);
+		for (String room : List.of(otherRoom.id().toString(), oldRoom.id().toString(), foreign.classroomId(), archived.id().toString(), UUID.randomUUID().toString())) {
+			mockMvc.perform(put(attendanceWriteUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken()))
+				.contentType(MediaType.APPLICATION_JSON).content(batch(fixture, entry(fixture.firstStudentId(), "PRESENT", false, null))
+					.replace(fixture.classroomId(), room))).andExpect(status().isNotFound());
+			mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).param("classroomId", room)
+				.header("Authorization", bearer(fixture.accessToken()))).andExpect(status().isNotFound());
+		}
+		mockMvc.perform(get(attendanceSheetUrl(fixture, ATTENDANCE_DATE)).header("Authorization", bearer(fixture.accessToken())))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.unreportedCount").value(2));
 	}
 
 	private AttendanceFixture createFixture() throws Exception {
@@ -225,6 +318,7 @@ class AttendanceControllerTests {
 			.andReturn();
 		String token = JsonPath.read(login.getResponse().getContentAsString(), "$.accessToken");
 		return new AttendanceFixture(establishment.id(), academicYearId, schoolClassId,
+			classroomRepository.findAll(establishment.id(), UUID.fromString(academicYearId), UUID.fromString(schoolClassId)).getFirst().id().toString(),
 			firstStudentId, secondStudentId, email, token);
 	}
 
@@ -255,7 +349,13 @@ class AttendanceControllerTests {
 			.content("{\"code\":\"A\",\"name\":\"Class A\"}"))
 			.andExpect(status().isCreated())
 			.andReturn();
-		return JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		String schoolClassId = JsonPath.read(result.getResponse().getContentAsString(), "$.id");
+		mockMvc.perform(post(base + "/school-years/" + academicYearId + "/classes/" + schoolClassId + "/classrooms")
+			.with(admin("can_school_class_create"))
+			.contentType(MediaType.APPLICATION_JSON)
+			.content("{\"code\":\"A\",\"name\":\"Class A\",\"maxStudents\":40}"))
+			.andExpect(status().isCreated());
+		return schoolClassId;
 	}
 
 	private void createEnrollment(String base, String academicYearId, String studentId, String schoolClassId)
@@ -296,8 +396,8 @@ class AttendanceControllerTests {
 			+ fixture.academicYearId() + "/students/" + studentId + "/attendance?from=" + from + "&to=" + to;
 	}
 
-	private static String batch(String... entries) {
-		return "{\"entries\":[" + String.join(",", entries) + "]}";
+	private static String batch(AttendanceFixture fixture, String... entries) {
+		return "{\"classroomId\":\"" + fixture.classroomId() + "\",\"entries\":[" + String.join(",", entries) + "]}";
 	}
 
 	private static String entry(String studentId, String status, boolean justified, String comment) {
@@ -334,7 +434,7 @@ class AttendanceControllerTests {
 		return "Bearer " + token;
 	}
 
-	private record AttendanceFixture(UUID establishmentId, String academicYearId, String schoolClassId,
+	private record AttendanceFixture(UUID establishmentId, String academicYearId, String schoolClassId, String classroomId,
 		String firstStudentId, String secondStudentId, String staffEmail, String accessToken) {
 	}
 }

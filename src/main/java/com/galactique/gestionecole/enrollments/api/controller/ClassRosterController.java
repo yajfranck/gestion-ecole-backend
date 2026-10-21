@@ -5,11 +5,10 @@ import java.util.UUID;
 
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.enrollments.api.dto.ClassStudentResponse;
@@ -33,16 +32,6 @@ public class ClassRosterController {
 	}
 
 	private EmployeeActor toActor(Authentication authentication) {
-		return new EmployeeActor(authentication.getName(), hasAuthority(authentication, "ADMIN_ACCESS"),
-			hasAuthority(authentication, "ESTABLISHMENT_STAFF_MANAGEMENT"));
-	}
-
-	private boolean hasAuthority(Authentication authentication, String expectedAuthority) {
-		for (GrantedAuthority authority : authentication.getAuthorities()) {
-			if (authority != null && expectedAuthority.equals(authority.getAuthority())) {
-				return true;
-			}
-		}
-		return false;
+		return new EmployeeActor(authentication.getName());
 	}
 }

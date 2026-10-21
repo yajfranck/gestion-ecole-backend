@@ -28,6 +28,24 @@ public class JpaStudentRepositoryAdapter implements StudentRepository {
 	}
 
 	@Override
+	@Transactional
+	public Student save(UUID establishmentId, String firstName, String lastName, java.time.LocalDate dateOfBirth) {
+		StudentEntity entity = new StudentEntity(establishmentId, nextStudentNumber(establishmentId), firstName, lastName);
+		entity.setDateOfBirth(dateOfBirth);
+		return toDomain(jpaRepository.saveAndFlush(entity));
+	}
+
+	@Override
+	@Transactional
+	public Student updateProfile(UUID studentId, UUID establishmentId, String firstName, String lastName,
+		java.time.LocalDate dateOfBirth) {
+		StudentEntity entity = jpaRepository.findByIdAndEstablishmentIdAndEnabledTrue(studentId, establishmentId).orElseThrow();
+		entity.updateProfile(firstName, lastName);
+		entity.setDateOfBirth(dateOfBirth);
+		return toDomain(entity);
+	}
+
+	@Override
 	@Transactional(readOnly = true)
 	public List<Student> findAllByEstablishmentId(UUID establishmentId) {
 		return jpaRepository.findAllByEstablishmentIdAndEnabledTrueOrderByLastNameAscFirstNameAscStudentNumberAsc(
@@ -76,7 +94,7 @@ public class JpaStudentRepositoryAdapter implements StudentRepository {
 
 	private Student toDomain(StudentEntity entity) {
 		return new Student(entity.getId(), entity.getEstablishmentId(), entity.getStudentNumber(),
-			entity.getFirstName(), entity.getLastName(), entity.isEnabled(), entity.getCreatedAt(), entity.getUpdatedAt());
+			entity.getFirstName(), entity.getLastName(), entity.getDateOfBirth(), entity.isEnabled(), entity.getCreatedAt(), entity.getUpdatedAt());
 	}
 
 	private String nextStudentNumber(UUID establishmentId) {

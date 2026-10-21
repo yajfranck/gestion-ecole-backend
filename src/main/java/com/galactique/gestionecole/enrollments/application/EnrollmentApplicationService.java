@@ -14,6 +14,7 @@ import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogAccess
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogNotFoundException;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.application.SchoolCalendarApplicationService;
+import com.galactique.gestionecole.schoolclasses.domain.Classroom;
 import com.galactique.gestionecole.students.application.StudentAccessDeniedException;
 import com.galactique.gestionecole.students.application.StudentApplicationService;
 import com.galactique.gestionecole.students.application.StudentNotFoundException;
@@ -132,12 +133,12 @@ public class EnrollmentApplicationService {
 	public EnrollmentCreationResult create(UUID establishmentId, UUID academicYearId, CreateEnrollmentCommand command,
 		EmployeeActor actor) {
 		validateAcademicYear(establishmentId, academicYearId, actor);
-		UUID classroomId;
+		Classroom classroom;
 		try {
 			schoolCalendarApplicationService.lockYearForEnrollment(establishmentId, academicYearId, actor);
 			studentApplicationService.findById(establishmentId, command.studentId(), actor);
-			classroomId = schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId,
-				command.schoolClassId(), command.classroomId(), actor).id();
+			classroom = schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId,
+				command.schoolClassId(), command.classroomId(), actor);
 		} catch (StudentNotFoundException | AcademicCalendarNotFoundException | SchoolCatalogNotFoundException exception) {
 			throw new EnrollmentNotFoundException();
 		} catch (StudentAccessDeniedException | AcademicCalendarAccessDeniedException
@@ -147,9 +148,10 @@ public class EnrollmentApplicationService {
 		if (enrollmentRepository.existsByStudentIdAndAcademicYearId(command.studentId(), academicYearId)) {
 			throw new EnrollmentConflictException();
 		}
+		ensureClassroomCapacity(classroom);
 		try {
 			Enrollment enrollment = enrollmentRepository.save(establishmentId, command.studentId(), academicYearId,
-				command.schoolClassId(), classroomId, command.acceptAdvance(), actor.username());
+				command.schoolClassId(), classroom.id(), command.acceptAdvance(), actor.username());
 			var payments = enrollmentFeeChargeGateway.applyFeesAndRecordPayments(enrollment, command.payments(), actor);
 			return new EnrollmentCreationResult(enrollment, payments);
 		} catch (DataIntegrityViolationException exception) {
@@ -167,6 +169,9 @@ public class EnrollmentApplicationService {
 			studentApplicationService.findById(establishmentId, enrollment.studentId(), actor);
 			var classroom = schoolCatalogApplicationService.resolveEnrollmentClassroom(establishmentId, academicYearId,
 				enrollment.schoolClassId(), classroomId, actor);
+			if (!classroom.id().equals(enrollment.classroomId())) {
+				ensureClassroomCapacity(classroom);
+			}
 			return enrollmentRepository.updateClassroom(enrollment, classroom.id());
 		} catch (StudentNotFoundException | SchoolCatalogNotFoundException exception) {
 			throw new EnrollmentNotFoundException();
@@ -175,8 +180,14 @@ public class EnrollmentApplicationService {
 		}
 	}
 
+	private void ensureClassroomCapacity(Classroom classroom) {
+		if (enrollmentRepository.countByClassroomId(classroom.id()) >= classroom.maxStudents()) {
+			throw new EnrollmentClassroomCapacityException();
+		}
+	}
+
 	private void validateAcademicYear(UUID establishmentId, UUID academicYearId, EmployeeActor actor) {
-		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
+		if (!licenseApplicationService.canAccessFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
 			java.time.Instant.now())) {
 			throw new EnrollmentAccessDeniedException();
 		}

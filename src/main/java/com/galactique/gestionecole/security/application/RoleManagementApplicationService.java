@@ -45,9 +45,8 @@ public class RoleManagementApplicationService {
 		String normalizedCode = normalizeCode(code);
 		Role current = securityDirectoryRepository.findRoleByCode(normalizedCode)
 			.orElseThrow(RoleNotFoundException::new);
-		Set<String> permissionCodes = new LinkedHashSet<>(command.permissionCodes());
-		if ("ADMIN".equals(normalizedCode) && permissionCodes.contains("ADMIN_ACCESS")) {
-			throw new InvalidRoleException("The ADMIN role cannot have ADMIN_ACCESS");
+		if (current.establishmentId() != null) {
+			throw new RoleNotFoundException();
 		}
 		Role updated = buildRole(normalizedCode, command.name(), command.description(),
 			command.permissionCodes(), current.enabled());
@@ -56,8 +55,8 @@ public class RoleManagementApplicationService {
 
 	private Role buildRole(String code, String name, String description,
 		List<String> permissionCodes, boolean enabled) {
-		if (permissionCodes == null || permissionCodes.isEmpty()) {
-			throw new InvalidRoleException("At least one permission is required");
+		if (permissionCodes == null) {
+			throw new InvalidRoleException("Permission codes are required");
 		}
 		Set<String> requestedCodes = new LinkedHashSet<>(permissionCodes);
 		if (requestedCodes.size() != permissionCodes.size()) {

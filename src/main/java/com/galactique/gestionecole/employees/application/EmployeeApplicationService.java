@@ -17,18 +17,23 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.galactique.gestionecole.establishments.application.EstablishmentEmployeeDeactivation;
-import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
-import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
+import com.galactique.gestionecole.employees.domain.Employee;
 import com.galactique.gestionecole.employees.domain.EmployeeInvitation;
 import com.galactique.gestionecole.employees.domain.EmployeeInvitationRepository;
+import com.galactique.gestionecole.employees.domain.EmployeeRepository;
+import com.galactique.gestionecole.establishments.application.EstablishmentEmployeeDeactivation;
+import com.galactique.gestionecole.establishments.domain.Establishment;
+import com.galactique.gestionecole.establishments.domain.EstablishmentRepository;
 import com.galactique.gestionecole.positions.domain.Position;
 import com.galactique.gestionecole.positions.domain.PositionRepository;
-import com.galactique.gestionecole.employees.domain.Employee;
-import com.galactique.gestionecole.employees.domain.EmployeeRepository;
+import com.galactique.gestionecole.security.application.CallerScopeService;
+import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
+import com.galactique.gestionecole.security.domain.UserAccountRepository;
 
 @Service
 public class EmployeeApplicationService implements EstablishmentEmployeeDeactivation {
+	private final CallerScopeService callerScope;
+	private final UserAccountRepository accounts;
 	private static final SecureRandom SECURE_RANDOM = new SecureRandom();
 	private static final int INVITATION_TOKEN_BYTES = 32;
 	private static final int INVITATION_TTL_HOURS = 48;
@@ -46,7 +51,9 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 		EmployeeRepository employeeRepository,
 		EmployeeInvitationRepository invitationRepository,
 		EmployeeInvitationMailer invitationMailer,
-		SecurityAccountProvisioner securityAccountProvisioner) {
+		SecurityAccountProvisioner securityAccountProvisioner, CallerScopeService callerScope, UserAccountRepository accounts) {
+		this.accounts = accounts;
+		this.callerScope = callerScope;
 		this.establishmentRepository = establishmentRepository;
 		this.positionRepository = positionRepository;
 		this.employeeRepository = employeeRepository;
@@ -60,10 +67,10 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 		Position position = positionRepository.findById(command.positionId())
 			.filter(Position::enabled)
 			.orElseThrow(EmployeeNotFoundException::new);
-		if (!actor.globalAdministrator()
-			&& !requireEstablishmentAdministrator(actor).establishmentId().equals(position.establishmentId())) {
-			throw new EmployeeAccessDeniedException();
+		if (actor.scopedEstablishmentId() != null && !actor.scopedEstablishmentId().equals(position.establishmentId())) {
+			throw new EmployeeNotFoundException();
 		}
+		callerScope.requireEstablishment(actor.username(), position.establishmentId());
 		var establishment = establishmentRepository.findById(position.establishmentId())
 			.orElseThrow(EmployeeNotFoundException::new);
 		if (!establishment.enabled()) {
@@ -74,8 +81,12 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 		if (effectiveRoleCodes.isEmpty()) {
 			throw new InvalidEmployeeRolesException();
 		}
-		if (employeeRepository.existsByEmployeeNumber(command.employeeNumber())
-			|| employeeRepository.existsByEmail(command.email())) {
+		boolean duplicate = employeeRepository.findAllByEstablishmentId(position.establishmentId()).stream()
+			.anyMatch(employee -> employee.employeeNumber().equals(command.employeeNumber()) || employee.email().equalsIgnoreCase(command.email()));
+		var existingAccount = accounts.findByUsername(command.email().strip().toLowerCase(Locale.ROOT));
+		boolean pendingInvitation = employeeRepository.findAll().stream().anyMatch(employee -> employee.email().equalsIgnoreCase(command.email())
+			&& employee.userAccountId() == null);
+		if (duplicate || pendingInvitation || existingAccount.filter(account -> !account.enabled() || account.locked()).isPresent()) {
 			throw new EmployeeConflictException();
 		}
 
@@ -85,6 +96,13 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 			command.email(), position.id(), directRoleCodes);
 		} catch (DataIntegrityViolationException exception) {
 			throw new EmployeeConflictException();
+		}
+
+		if (existingAccount.isPresent()) {
+			UUID accountId = existingAccount.get().id();
+			Employee linked = employeeRepository.attachUserAccount(employee.id(), accountId);
+			securityAccountProvisioner.addEmployeeRoles(accountId, effectiveRoleCodes);
+			return linked;
 		}
 
 		String invitationToken = generateToken();
@@ -136,11 +154,8 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 
 	@Transactional(readOnly = true)
 	public List<Employee> findAll(EmployeeActor actor) {
-		if (actor.globalAdministrator()) {
-			return employeeRepository.findAll();
-		}
-		Employee actorEmployee = requireEstablishmentAdministrator(actor);
-		return employeeRepository.findAllByEstablishmentId(actorEmployee.establishmentId());
+		return findEstablishments(actor).stream()
+			.flatMap(establishment -> employeeRepository.findAllByEstablishmentId(establishment.id()).stream()).toList();
 	}
 
 	@Transactional(readOnly = true)
@@ -150,12 +165,10 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 
 	private Employee findWithinScope(UUID id, EmployeeActor actor) {
 		Employee employee = employeeRepository.findById(id).orElseThrow(EmployeeNotFoundException::new);
-		if (!actor.globalAdministrator()) {
-			Employee actorEmployee = requireEstablishmentAdministrator(actor);
-			if (!actorEmployee.establishmentId().equals(employee.establishmentId())) {
-				throw new EmployeeNotFoundException();
-			}
+		if (actor.scopedEstablishmentId() != null && !actor.scopedEstablishmentId().equals(employee.establishmentId())) {
+			throw new EmployeeNotFoundException();
 		}
+		callerScope.requireEstablishment(actor.username(), employee.establishmentId());
 		return employee;
 	}
 
@@ -213,7 +226,8 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 	public void deactivateEmployee(UUID id, EmployeeActor actor) {
 		Employee current = findWithinScope(id, actor);
 		employeeRepository.disable(id);
-		if (current.userAccountId() != null) {
+		if (current.userAccountId() != null && employeeRepository.findAllByUserAccountId(current.userAccountId()).stream()
+			.noneMatch(Employee::enabled)) {
 			securityAccountProvisioner.disableEmployeeAccount(current.userAccountId());
 		}
 	}
@@ -224,7 +238,8 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 		for (Employee employee : employeeRepository.findAllByEstablishmentId(establishmentId)) {
 			if (employee.enabled()) {
 				employeeRepository.disable(employee.id());
-				if (employee.userAccountId() != null) {
+				if (employee.userAccountId() != null && employeeRepository.findAllByUserAccountId(employee.userAccountId()).stream()
+					.noneMatch(Employee::enabled)) {
 					securityAccountProvisioner.disableEmployeeAccount(employee.userAccountId());
 				}
 			}
@@ -232,49 +247,23 @@ public class EmployeeApplicationService implements EstablishmentEmployeeDeactiva
 	}
 
 	@Transactional(readOnly = true)
-	public Employee findCurrent(String username) {
-		Employee employee = employeeRepository.findByEmail(username).orElseThrow(EmployeeNotFoundException::new);
-		if (!employee.enabled()) {
-			throw new EmployeeNotFoundException();
-		}
-		return employee;
+	public Employee findCurrent(String username, UUID establishmentId) {
+		return callerScope.requireMember(username, establishmentId);
 	}
 
 	@Transactional(readOnly = true)
-	public List<com.galactique.gestionecole.establishments.domain.Establishment> findEstablishments(EmployeeActor actor) {
-		if (actor.globalAdministrator()) {
-			return establishmentRepository.findAll();
-		}
+	public List<Establishment> findEstablishments(EmployeeActor actor) {
 		if (actor.scopedEstablishmentId() != null) {
-			employeeRepository.findByEmail(actor.username())
-				.filter(Employee::enabled)
-				.filter(employee -> employee.userAccountId() != null)
-				.filter(employee -> actor.scopedEstablishmentId().equals(employee.establishmentId()))
-				.orElseThrow(EmployeeAccessDeniedException::new);
+			callerScope.requireEstablishment(actor.username(), actor.scopedEstablishmentId());
 			return establishmentRepository.findById(actor.scopedEstablishmentId())
-				.filter(com.galactique.gestionecole.establishments.domain.Establishment::enabled)
-				.stream().toList();
+				.filter(Establishment::enabled).stream().toList();
 		}
-		Employee actorEmployee = requireEstablishmentAdministrator(actor);
-		return establishmentRepository.findById(actorEmployee.establishmentId()).stream().toList();
-	}
-
-	private Employee requireEstablishmentAdministrator(EmployeeActor actor) {
-		if (!actor.establishmentAdministrator()) {
-			throw new EmployeeAccessDeniedException();
-		}
-		Employee employee = employeeRepository.findByEmail(actor.username())
-			.orElseThrow(EmployeeAccessDeniedException::new);
-		if (!employee.enabled() || !employee.establishmentAdmin() || employee.userAccountId() == null) {
-			throw new EmployeeAccessDeniedException();
-		}
-		return employee;
+		return callerScope.findStaffEstablishments(actor.username());
 	}
 
 	private Set<String> validateDirectRoleCodes(Set<String> roleCodes, EmployeeActor actor) {
 		Set<String> normalized = roleCodes == null ? Set.of() : Set.copyOf(roleCodes);
-		if (!Set.of("STAFF", "ESTABLISHMENT_ADMIN").containsAll(normalized)
-			|| normalized.contains("ESTABLISHMENT_ADMIN") && !actor.globalAdministrator()) {
+		if (!Set.of("STAFF", "ESTABLISHMENT_ADMIN").containsAll(normalized)) {
 			throw new InvalidEmployeeRolesException();
 		}
 		return normalized;

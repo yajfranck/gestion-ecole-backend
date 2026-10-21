@@ -11,10 +11,10 @@ import com.galactique.gestionecole.employees.application.EmployeeAccessDeniedExc
 import com.galactique.gestionecole.employees.application.EmployeeActor;
 import com.galactique.gestionecole.employees.application.EmployeeApplicationService;
 import com.galactique.gestionecole.establishments.domain.Establishment;
-import com.galactique.gestionecole.students.domain.Student;
-import com.galactique.gestionecole.students.domain.StudentRepository;
 import com.galactique.gestionecole.licenses.application.LicenseApplicationService;
 import com.galactique.gestionecole.licenses.domain.LicenseFeature;
+import com.galactique.gestionecole.students.domain.Student;
+import com.galactique.gestionecole.students.domain.StudentRepository;
 
 @Service
 public class StudentApplicationService {
@@ -35,7 +35,7 @@ public class StudentApplicationService {
 	public Student create(UUID establishmentId, CreateStudentCommand command, EmployeeActor actor) {
 		requireAccessibleEstablishment(establishmentId, actor);
 		try {
-			return studentRepository.save(establishmentId, command.firstName(), command.lastName());
+			return studentRepository.save(establishmentId, command.firstName(), command.lastName(), command.dateOfBirth());
 		} catch (DataIntegrityViolationException exception) {
 			throw new StudentConflictException();
 		}
@@ -77,7 +77,8 @@ public class StudentApplicationService {
 		Student current = findActiveStudent(establishmentId, studentId, actor);
 		String firstName = command.firstName() == null ? current.firstName() : command.firstName();
 		String lastName = command.lastName() == null ? current.lastName() : command.lastName();
-		return studentRepository.updateProfile(studentId, establishmentId, firstName, lastName);
+		return studentRepository.updateProfile(studentId, establishmentId, firstName, lastName,
+			command.dateOfBirth() == null ? current.dateOfBirth() : command.dateOfBirth());
 	}
 
 	@Transactional
@@ -87,7 +88,7 @@ public class StudentApplicationService {
 	}
 
 	private Establishment requireAccessibleEstablishment(UUID establishmentId, EmployeeActor actor) {
-		if (!licenseApplicationService.hasFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
+		if (!licenseApplicationService.canAccessFeature(establishmentId, LicenseFeature.STUDENT_RECORDS,
 			java.time.Instant.now())) {
 			throw new StudentAccessDeniedException();
 		}

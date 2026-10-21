@@ -1,12 +1,12 @@
 package com.galactique.gestionecole.reporting.api;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -37,11 +38,11 @@ import com.galactique.gestionecole.licenses.domain.PlatformLicense;
 import com.galactique.gestionecole.positions.domain.PositionRepository;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYear;
 import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClassRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SubjectRepository;
 import com.galactique.gestionecole.security.domain.SecurityAccountProvisioner;
 import com.galactique.gestionecole.students.domain.StudentRepository;
-import com.jayway.jsonpath.JsonPath;
 
 @SpringBootTest(properties = "management.health.mail.enabled=false")
 @AutoConfigureMockMvc
@@ -56,7 +57,7 @@ class DashboardControllerTests {
 	@Autowired SecurityAccountProvisioner accounts;
 	@Autowired AcademicYearRepository years;
 	@Autowired SchoolClassRepository classes;
-	@Autowired com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository classrooms;
+	@Autowired ClassroomRepository classrooms;
 	@Autowired StudentRepository students;
 	@Autowired EnrollmentRepository enrollments;
 	@Autowired SubjectRepository subjects;
@@ -101,8 +102,8 @@ class DashboardControllerTests {
 		var classA = classes.save(fixture.school().id(), year.id(), "A", "Class A", "Scientifique");
 		var classB = classes.save(fixture.school().id(), year.id(), "B", "Class B", "Littéraire");
 		classes.save(fixture.school().id(), year.id(), "EMPTY", "Empty class", null);
-		var roomA = classrooms.save(fixture.school().id(), year.id(), classA.id(), "A", "Room A");
-		var roomB = classrooms.save(fixture.school().id(), year.id(), classB.id(), "B", "Room B");
+		var roomA = classrooms.save(fixture.school().id(), year.id(), classA.id(), "A", "Room A", 40);
+		var roomB = classrooms.save(fixture.school().id(), year.id(), classB.id(), "B", "Room B", 40);
 		var first = students.save(fixture.school().id(), "First", "Student");
 		var second = students.save(fixture.school().id(), "Second", "Student");
 		var third = students.save(fixture.school().id(), "Third", "Student");
@@ -128,7 +129,7 @@ class DashboardControllerTests {
 		seedContent(fixture, year, classA.id(), subject, "LESSON", "ARCHIVED");
 		seedContent(fixture, year, classB.id(), subject, "ASSIGNMENT", "PUBLISHED");
 		String token = login(fixture);
-		mvc.perform(get("/api/v1/dashboard").param("academicYearId", year.id().toString())
+		mvc.perform(get(dashboardUrl(fixture, year.id()))
 			.param("date", today.toString()).param("establishmentId", foreign.school().id().toString())
 			.header("Authorization", "Bearer " + token))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.scope").value("ESTABLISHMENT"))
@@ -156,11 +157,11 @@ class DashboardControllerTests {
 			.andExpect(jsonPath("$.establishment.finance[1].overdueBalance").value(50))
 			.andExpect(jsonPath("$.establishment.learning.draftLessons").value(1))
 			.andExpect(jsonPath("$.establishment.learning.publishedAssignments").value(1));
-		mvc.perform(get("/api/v1/dashboard").with(reader(fixture.email())))
+		mvc.perform(get(dashboardUrl(fixture, year.id())).with(reader(fixture.email())))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.academicYear.id").value(year.id().toString()));
-		mvc.perform(get("/api/v1/dashboard").param("academicYearId", foreignYear.id().toString())
+		mvc.perform(get(dashboardUrl(fixture, foreignYear.id()))
 			.with(reader(fixture.email()))).andExpect(status().isNotFound());
-		mvc.perform(get("/api/v1/dashboard").param("academicYearId", year.id().toString())
+		mvc.perform(get(dashboardUrl(fixture, year.id()))
 			.param("date", year.endsOn().plusDays(1).toString()).with(reader(fixture.email())))
 			.andExpect(status().isBadRequest());
 	}
@@ -168,22 +169,24 @@ class DashboardControllerTests {
 	@Test
 	void emptyDashboardAndLicenseTransitionsHaveExplicitStates() throws Exception {
 		Fixture fixture = fixture(true);
-		mvc.perform(get("/api/v1/dashboard").with(reader(fixture.email())))
-			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.academicYear").isEmpty())
+		var selectedYear = year(fixture, "Selected", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31));
+		mvc.perform(get(dashboardUrl(fixture, years.findAllByEstablishmentId(fixture.school().id()).getLast().id())).with(reader(fixture.email())))
+			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.academicYear.id").value(selectedYear.id().toString()))
 			.andExpect(jsonPath("$.establishment.classes", hasSize(0)))
 			.andExpect(jsonPath("$.establishment.finance", hasSize(0)))
 			.andExpect(jsonPath("$.establishment.attendance.present").value(0));
 		licenses.assign(fixture.school().id(), OFFER, Instant.now().plusSeconds(86400), null, "TEST");
-		mvc.perform(get("/api/v1/dashboard").with(reader(fixture.email())))
+		mvc.perform(get(dashboardUrl(fixture, years.findAllByEstablishmentId(fixture.school().id()).getLast().id())).with(reader(fixture.email())))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.license.state").value("ACTIVE"));
 		licenses.suspend(fixture.school().id(), fixture.license().id(), "TEST");
-		mvc.perform(get("/api/v1/dashboard").with(reader(fixture.email())))
+		mvc.perform(get(dashboardUrl(fixture, years.findAllByEstablishmentId(fixture.school().id()).getLast().id())).with(reader(fixture.email())))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.license.state").value("SUSPENDED"))
 			.andExpect(jsonPath("$.establishment.finance").isEmpty())
 			.andExpect(jsonPath("$.establishment.attendance").isEmpty())
 			.andExpect(jsonPath("$.establishment.learning").isEmpty());
 		Fixture unlicensed = fixture(false);
-		mvc.perform(get("/api/v1/dashboard").with(reader(unlicensed.email())))
+		var unlicensedYear = year(unlicensed, "Selected", LocalDate.of(2026, 1, 1), LocalDate.of(2026, 12, 31));
+		mvc.perform(get(dashboardUrl(unlicensed, unlicensedYear.id())).with(reader(unlicensed.email())))
 			.andExpect(status().isOk()).andExpect(jsonPath("$.establishment.license.state").value("UNLICENSED"));
 	}
 
@@ -205,9 +208,13 @@ class DashboardControllerTests {
 		mvc.perform(get("/api/v1/dashboard").with(reader(disabled.email()))).andExpect(status().isForbidden());
 		Fixture disabledSchool = fixture(true);
 		schools.disable(disabledSchool.school().id());
-		mvc.perform(get("/api/v1/dashboard").with(reader(disabledSchool.email()))).andExpect(status().isNotFound());
+		mvc.perform(get(dashboardUrl(disabledSchool, UUID.randomUUID())).with(reader(disabledSchool.email()))).andExpect(status().isNotFound());
 		mvc.perform(get("/api/v1/dashboard").param("academicYearId", "invalid").with(reader("admin-tech")))
 			.andExpect(status().isBadRequest());
+	}
+
+	private String dashboardUrl(Fixture fixture, UUID yearId) {
+		return "/api/v1/establishments/" + fixture.school().id() + "/school-years/" + yearId + "/dashboard";
 	}
 
 	private Fixture fixture(boolean licensed) {

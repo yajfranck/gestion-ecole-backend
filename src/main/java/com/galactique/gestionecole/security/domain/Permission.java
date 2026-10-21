@@ -1,16 +1,13 @@
 package com.galactique.gestionecole.security.domain;
 
 import java.util.Objects;
-import java.util.regex.Pattern;
 
 public record Permission(String code, String description) {
-	private static final Pattern LEGACY_CODE_PATTERN = Pattern.compile("[A-Z][A-Z0-9_]*");
-
 	public Permission {
 		Objects.requireNonNull(code, "code must not be null");
 		if (code.length() > 64
-			|| !LEGACY_CODE_PATTERN.matcher(code).matches() && !isConventionPermissionCode(code)) {
-			throw new IllegalArgumentException("Permission code must be uppercase or follow can_<entity>_<action>");
+			|| !isConventionPermissionCode(code)) {
+			throw new IllegalArgumentException("Permission code must follow can_<entity>_<action>");
 		}
 		Objects.requireNonNull(description, "description must not be null");
 		if (description.isBlank() || description.length() > 255) {

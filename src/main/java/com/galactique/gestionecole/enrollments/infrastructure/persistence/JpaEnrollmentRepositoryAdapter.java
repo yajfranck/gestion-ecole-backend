@@ -51,6 +51,12 @@ public class JpaEnrollmentRepositoryAdapter implements EnrollmentRepository {
 
 	@Override
 	@Transactional(readOnly = true)
+	public long countByClassroomId(UUID classroomId) {
+		return jpaRepository.countByClassroomId(classroomId);
+	}
+
+	@Override
+	@Transactional(readOnly = true)
 	public List<Enrollment> findAllByEstablishmentIdAndAcademicYearId(UUID establishmentId, UUID academicYearId) {
 		return jpaRepository.findAllByEstablishmentIdAndAcademicYearIdOrderByCreatedAtAsc(
 			establishmentId, academicYearId).stream().map(EnrollmentEntity::toDomain).toList();

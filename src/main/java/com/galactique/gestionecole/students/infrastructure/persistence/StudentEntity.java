@@ -36,6 +36,8 @@ public class StudentEntity {
 	@Column(nullable = false)
 	private boolean enabled = true;
 
+	private java.time.LocalDate dateOfBirth;
+
 	@Column(nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -69,6 +71,8 @@ public class StudentEntity {
 	public String getStudentNumber() { return studentNumber; }
 	public String getFirstName() { return firstName; }
 	public String getLastName() { return lastName; }
+	public java.time.LocalDate getDateOfBirth() { return dateOfBirth; }
+	public void setDateOfBirth(java.time.LocalDate dateOfBirth) { this.dateOfBirth = dateOfBirth; }
 	public boolean isEnabled() { return enabled; }
 	public Instant getCreatedAt() { return createdAt; }
 	public Instant getUpdatedAt() { return updatedAt; }
