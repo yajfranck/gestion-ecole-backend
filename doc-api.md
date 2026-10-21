@@ -466,8 +466,8 @@ La création exige un JWT valide, `hasAuthority('can_subject_create')`, l’acc�
 
 ### Classes
 
-- `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — permission `can_school_class_read`; liste les classes actives de l’année.
-- `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_read`; fiche de classe.
+- `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — permission `can_school_class_read`; liste les classes actives de l’année. Chaque objet contient également `classroomCount` (nombre de salles actives), `totalCapacity` (somme de leurs capacités maximales) et `enrolledStudentCount` (nombre d’élèves inscrits dans la classe pour l’année).
+- `GET /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_read`; fiche de classe avec les mêmes indicateurs.
 - `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes` — `can_school_class_create`; crée une classe sans salle. Réponse `201 Created` avec la classe.
 - `POST /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/bulk` — `can_school_class_create`; crée atomiquement 1 à 100 classes sans salle. Réponse `201 Created` avec le tableau des classes créées.
 - `PATCH /api/v1/establishments/{establishmentId}/school-years/{academicYearId}/classes/{schoolClassId}` — `can_school_class_update`; modifie le code, le nom ou la série, indépendamment. Réponse `200 OK` avec la classe mise à jour.

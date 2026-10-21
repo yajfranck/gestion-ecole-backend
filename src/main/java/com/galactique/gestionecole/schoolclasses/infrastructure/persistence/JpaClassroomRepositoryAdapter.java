@@ -2,13 +2,17 @@ package com.galactique.gestionecole.schoolclasses.infrastructure.persistence;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.ByteBuffer;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 import com.galactique.gestionecole.schoolclasses.domain.Classroom;
 import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomStatistics;
 
 @Repository
 @Transactional
@@ -45,6 +49,14 @@ public class JpaClassroomRepositoryAdapter implements ClassroomRepository {
 	@Override @Transactional(readOnly = true)
 	public long countEnrollments(UUID classroomId) { return repository.countEnrollments(classroomId); }
 	@Override @Transactional(readOnly = true)
+	public Map<UUID, ClassroomStatistics> findStatisticsByEstablishmentIdAndAcademicYearId(
+		UUID establishmentId, UUID academicYearId) {
+		return repository.findStatisticsByEstablishmentIdAndAcademicYearId(establishmentId, academicYearId).stream()
+			.collect(Collectors.toUnmodifiableMap(statistics -> toUuid(statistics.getSchoolClassId()),
+				statistics -> new ClassroomStatistics(statistics.getClassroomCount(), statistics.getTotalCapacity(),
+					statistics.getEnrolledStudentCount())));
+	}
+	@Override @Transactional(readOnly = true)
 	public boolean hasTimetableEntries(UUID classroomId) { return repository.countTimetableEntries(classroomId) > 0; }
 	@Override @Transactional(readOnly = true)
 	public Optional<Classroom> findInYear(UUID establishmentId, UUID academicYearId, UUID classroomId) {
@@ -55,5 +67,16 @@ public class JpaClassroomRepositoryAdapter implements ClassroomRepository {
 	private ClassroomEntity findEntity(Classroom current) {
 		return repository.findByIdAndEstablishmentIdAndAcademicYearIdAndSchoolClassIdAndEnabledTrue(
 			current.id(), current.establishmentId(), current.academicYearId(), current.schoolClassId()).orElseThrow();
+	}
+
+	private UUID toUuid(Object value) {
+		if (value instanceof UUID uuid) {
+			return uuid;
+		}
+		if (value instanceof byte[] bytes && bytes.length == 16) {
+			var buffer = ByteBuffer.wrap(bytes);
+			return new UUID(buffer.getLong(), buffer.getLong());
+		}
+		return UUID.fromString(value.toString());
 	}
 }

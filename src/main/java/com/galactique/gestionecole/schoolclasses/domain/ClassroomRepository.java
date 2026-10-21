@@ -1,6 +1,7 @@
 package com.galactique.gestionecole.schoolclasses.domain;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -12,6 +13,8 @@ public interface ClassroomRepository {
 	void archive(Classroom current);
 	boolean hasEnrollments(UUID classroomId);
 	long countEnrollments(UUID classroomId);
+	Map<UUID, ClassroomStatistics> findStatisticsByEstablishmentIdAndAcademicYearId(
+		UUID establishmentId, UUID academicYearId);
 	boolean hasTimetableEntries(UUID classroomId);
 	Optional<Classroom> findInYear(UUID establishmentId, UUID academicYearId, UUID classroomId);
 }

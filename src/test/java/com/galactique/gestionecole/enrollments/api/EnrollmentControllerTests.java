@@ -65,6 +65,12 @@ class EnrollmentControllerTests {
 			.andExpect(status().isCreated())
 			.andExpect(jsonPath("$.studentId").value(studentId))
 			.andExpect(jsonPath("$.schoolClassId").value(firstClassId));
+		mockMvc.perform(get(establishmentUrl + "/school-years/" + firstYearId + "/classes")
+			.with(administrator("can_school_class_read")))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$[0].classroomCount").value(1))
+			.andExpect(jsonPath("$[0].totalCapacity").value(40))
+			.andExpect(jsonPath("$[0].enrolledStudentCount").value(1));
 
 		mockMvc.perform(post(firstYearEnrollmentsUrl)
 			.with(administrator("can_enrollment_create"))

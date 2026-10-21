@@ -28,6 +28,7 @@ import com.galactique.gestionecole.schoolclasses.application.CreateSchoolClassCo
 import com.galactique.gestionecole.schoolclasses.application.SchoolCatalogApplicationService;
 import com.galactique.gestionecole.schoolclasses.application.UpdateSchoolClassCommand;
 import com.galactique.gestionecole.schoolclasses.domain.ClassroomSubjectTeacher;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomStatistics;
 
 import jakarta.validation.Valid;
 
@@ -45,8 +46,11 @@ public class SchoolClassController {
 	@PreAuthorize("hasAuthority('can_school_class_read')")
 	public List<SchoolClassResponse> getClasses(@PathVariable UUID establishmentId,
 		@PathVariable UUID academicYearId, Authentication authentication) {
+		var statistics = schoolCatalogApplicationService.findClassroomStatistics(establishmentId, academicYearId,
+			toActor(authentication));
 		return schoolCatalogApplicationService.findClasses(establishmentId, academicYearId, toActor(authentication))
-			.stream().map(SchoolClassResponse::from).toList();
+			.stream().map(schoolClass -> SchoolClassResponse.from(schoolClass,
+				statistics.getOrDefault(schoolClass.id(), ClassroomStatistics.empty()))).toList();
 	}
 
 	/** Retourne une classe identifiée dans une année scolaire. */
@@ -54,8 +58,11 @@ public class SchoolClassController {
 	@PreAuthorize("hasAuthority('can_school_class_read')")
 	public SchoolClassResponse getClass(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@PathVariable UUID schoolClassId, Authentication authentication) {
-		return SchoolClassResponse.from(schoolCatalogApplicationService.findClass(
-			establishmentId, academicYearId, schoolClassId, toActor(authentication)));
+		var actor = toActor(authentication);
+		var schoolClass = schoolCatalogApplicationService.findClass(establishmentId, academicYearId, schoolClassId, actor);
+		var statistics = schoolCatalogApplicationService.findClassroomStatistics(establishmentId, academicYearId, actor);
+		return SchoolClassResponse.from(schoolClass,
+			statistics.getOrDefault(schoolClass.id(), ClassroomStatistics.empty()));
 	}
 
 	/** Crée une classe dans l’année scolaire. */
@@ -97,9 +104,12 @@ public class SchoolClassController {
 	public SchoolClassResponse updateClass(@PathVariable UUID establishmentId, @PathVariable UUID academicYearId,
 		@PathVariable UUID schoolClassId, @Valid @RequestBody UpdateSchoolClassRequest request,
 		Authentication authentication) {
-		return SchoolClassResponse.from(schoolCatalogApplicationService.updateClass(establishmentId, academicYearId,
-			schoolClassId, new UpdateSchoolClassCommand(request.code(), request.name(), request.series()),
-			toActor(authentication)));
+		var actor = toActor(authentication);
+		var schoolClass = schoolCatalogApplicationService.updateClass(establishmentId, academicYearId, schoolClassId,
+			new UpdateSchoolClassCommand(request.code(), request.name(), request.series()), actor);
+		var statistics = schoolCatalogApplicationService.findClassroomStatistics(establishmentId, academicYearId, actor);
+		return SchoolClassResponse.from(schoolClass,
+			statistics.getOrDefault(schoolClassId, ClassroomStatistics.empty()));
 	}
 
 	/** Archive une classe sans supprimer ses données historiques. */

@@ -3,6 +3,7 @@ package com.galactique.gestionecole.schoolclasses.application;
 import java.util.List;
 import java.util.Locale;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -21,6 +22,7 @@ import com.galactique.gestionecole.schoolclasses.domain.AcademicYearRepository;
 import com.galactique.gestionecole.schoolclasses.domain.ClassSubjectRepository;
 import com.galactique.gestionecole.schoolclasses.domain.Classroom;
 import com.galactique.gestionecole.schoolclasses.domain.ClassroomRepository;
+import com.galactique.gestionecole.schoolclasses.domain.ClassroomStatistics;
 import com.galactique.gestionecole.schoolclasses.domain.ClassroomSubjectTeacher;
 import com.galactique.gestionecole.schoolclasses.domain.ClassroomSubjectTeacherRepository;
 import com.galactique.gestionecole.schoolclasses.domain.SchoolClass;
@@ -134,6 +136,14 @@ public class SchoolCatalogApplicationService {
 		requireEstablishment(establishmentId, actor);
 		findAcademicYear(establishmentId, academicYearId);
 		return schoolClassRepository.findAllByEstablishmentIdAndAcademicYearId(establishmentId, academicYearId);
+	}
+
+	@Transactional(readOnly = true)
+	public Map<UUID, ClassroomStatistics> findClassroomStatistics(UUID establishmentId, UUID academicYearId,
+		EmployeeActor actor) {
+		requireEstablishment(establishmentId, actor);
+		findAcademicYear(establishmentId, academicYearId);
+		return classroomRepository.findStatisticsByEstablishmentIdAndAcademicYearId(establishmentId, academicYearId);
 	}
 
 	@Transactional(readOnly = true)
